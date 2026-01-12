@@ -20,9 +20,10 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test"
+    "build": "bun x tsc -p tsconfig.json",
+    "lint": "bun x tsc -p tsconfig.json --noEmit",
+    "test": "bun test",
+    "prepare": "bun run build"
   },
   "dependencies": {
     "zod": "^4.3.5"
