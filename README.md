@@ -130,6 +130,13 @@ srtla_rec --srtla_port <port> --srt_hostname <host> --srt_port <port> [--verbose
 - [ ] Source IPs file created
 - [ ] Verified with `ip route get ... from <source_ip>`
 
+## Support the Project
+
+If you find SRTLA useful, consider supporting CeraLive development:
+
+- ☕ [Ko-fi](https://ko-fi.com/andrescera)
+- 💳 [PayPal](https://www.paypal.com/donate/?business=7KKQS9KBSAMNE&no_recurring=0&item_name=CERALIVE+Development+Support&currency_code=USD)
+
 ## License
 
 GNU Affero General Public License v3.0 (AGPL-3.0)
