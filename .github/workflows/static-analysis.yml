@@ -1,0 +1,63 @@
+name: Static Analysis
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  clang-tidy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-tidy \
+            cmake \
+            pkg-config \
+            libspdlog-dev
+      
+      - name: Configure CMake
+        run: |
+          cmake -B build -DSRTLA_BUILD_TESTS=OFF -DSRTLA_ENABLE_CLANG_TIDY=OFF
+      
+      - name: Run clang-tidy
+        run: |
+          cmake --build build --target lint
+
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            pkg-config \
+            libspdlog-dev
+      
+      - name: Configure CMake
+        run: |
+          cmake -B build -DSRTLA_BUILD_TESTS=ON
+      
+      - name: Build
+        run: |
+          cmake --build build
+      
+      - name: Run tests
+        run: |
+          cd build && ctest --output-on-failure
