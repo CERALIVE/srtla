@@ -1,5 +1,5 @@
 import { z } from "zod";
-export declare const ipListSchema: z.ZodArray<z.ZodString>;
+export declare const ipListSchema: any;
 export type IpList = z.output<typeof ipListSchema>;
 export type IpListInput = z.input<typeof ipListSchema>;
 /**

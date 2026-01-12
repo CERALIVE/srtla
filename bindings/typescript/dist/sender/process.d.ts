@@ -6,11 +6,11 @@ export interface SpawnSrtlaSendOptions {
     spawnOptions?: SpawnOptions;
 }
 export declare function getSrtlaSendExec(execPath?: string): string;
-export declare function spawnSrtlaSend(options: SpawnSrtlaSendOptions): import("node:child_process").ChildProcess;
+export declare function spawnSrtlaSend(options: SpawnSrtlaSendOptions): ChildProcess;
 export declare function sendSrtlaSendHup(): Promise<void>;
 export declare function sendSrtlaSendTerm(): Promise<void>;
 export declare function isSrtlaSendRunning(): Promise<boolean>;
 /**
  * Convenience: build args from options and spawn the process.
  */
-export declare function buildAndSpawnSrtlaSend(options: SrtlaSendOptionsInput, spawnOptions?: SpawnOptions): import("node:child_process").ChildProcess;
+export declare function buildAndSpawnSrtlaSend(options: SrtlaSendOptionsInput, spawnOptions?: SpawnOptions): ChildProcess;
