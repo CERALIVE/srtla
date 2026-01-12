@@ -14,3 +14,7 @@ CMakeUserPresets.json
 irltk_srtla_rec
 srtla_rec
 srtla_send
+
+# TypeScript bindings
+bindings/typescript/node_modules/
+bindings/typescript/*.tsbuildinfo
