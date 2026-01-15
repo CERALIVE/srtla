@@ -241,6 +241,17 @@ jobs:
           body: |
             ## srtla v${{ needs.calculate-version.outputs.version }}
 
+            SRTLA (SRT Link Aggregation) - Bond multiple network connections for reliable streaming.
+
+            ### Dependency Chain
+            ```
+            srt
+              └── srtla (this package)
+                    ├── Depends: srt, libspdlog1
+                    │
+                    └── Used by: ceracoder → ceralive-device
+            ```
+
             ### Debian Packages
             | Architecture | Package |
             |--------------|---------|
