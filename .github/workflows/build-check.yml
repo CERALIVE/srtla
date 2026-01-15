@@ -37,6 +37,7 @@ jobs:
               build-essential \
               cmake \
               git \
+              libspdlog-dev \
               && rm -rf /var/lib/apt/lists/*
           WORKDIR /build
           COPY . .
