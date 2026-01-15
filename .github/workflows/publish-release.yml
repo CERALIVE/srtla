@@ -134,7 +134,8 @@ jobs:
             --maintainer "CERALIVE <contact@ceralive.com>" \
             --url "https://github.com/CERALIVE/srtla" \
             --license "AGPL-3.0" \
-            --depends "libspdlog-dev" \
+            --depends "srt" \
+            --depends "libspdlog1" \
             -p "dist/srtla_${VERSION}_${ARCH}.deb" \
             build-output/usr/=/usr/
 
