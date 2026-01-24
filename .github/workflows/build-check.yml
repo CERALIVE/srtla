@@ -9,49 +9,43 @@ on:
 jobs:
   build:
     name: Build ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        arch: [arm64, amd64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Build srtla for ${{ matrix.arch }}
+      - name: Install dependencies
         run: |
-          PLATFORM="linux/${{ matrix.arch }}"
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake git
 
-          docker buildx build \
-            --platform "$PLATFORM" \
-            --load \
-            -t srtla-builder:${{ matrix.arch }} \
-            -f - . <<'DOCKERFILE'
-          FROM debian:bookworm-slim
-          RUN apt-get update && apt-get install -y \
-              build-essential \
-              cmake \
-              git \
-              libspdlog-dev \
-              && rm -rf /var/lib/apt/lists/*
-          WORKDIR /build
-          COPY . .
-          RUN cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
-          DOCKERFILE
-
-      - name: Verify binaries were built
+      - name: Build srtla
         run: |
-          docker run --rm srtla-builder:${{ matrix.arch }} ls -la /build/build/srtla_send /build/build/srtla_rec
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+
+      - name: Run tests
+        run: |
+          cd build
+          ctest --output-on-failure
+
+      - name: Verify binaries
+        run: |
+          ls -la build/srtla_send build/srtla_rec
+          file build/srtla_send build/srtla_rec
 
       - name: Build Summary
         run: |
           echo "## ✅ Build Check Passed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Architecture:** ${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY

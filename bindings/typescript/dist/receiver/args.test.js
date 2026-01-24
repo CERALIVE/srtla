@@ -9,18 +9,18 @@ describe("buildSrtlaRecArgs", () => {
             "--srt_hostname",
             "127.0.0.1",
             "--srt_port",
-            "5001",
+            "4001",
         ]);
         expect(options.srtlaPort).toBe(5000);
         expect(options.srtHostname).toBe("127.0.0.1");
-        expect(options.srtPort).toBe(5001);
+        expect(options.srtPort).toBe(4001);
     });
-    test("includes verbose flag when set", () => {
+    test("includes log_level when set", () => {
         const { args } = buildSrtlaRecArgs({
             srtlaPort: 6000,
             srtHostname: "0.0.0.0",
             srtPort: 6001,
-            verbose: true,
+            logLevel: "debug",
         });
         expect(args.slice(0, 6)).toEqual([
             "--srtla_port",
@@ -30,6 +30,13 @@ describe("buildSrtlaRecArgs", () => {
             "--srt_port",
             "6001",
         ]);
-        expect(args[args.length - 1]).toBe("--verbose");
+        expect(args).toContain("--log_level");
+        expect(args).toContain("debug");
+    });
+    test("omits log_level when not set", () => {
+        const { args } = buildSrtlaRecArgs({
+            srtlaPort: 5000,
+        });
+        expect(args).not.toContain("--log_level");
     });
 });

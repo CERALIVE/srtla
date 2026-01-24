@@ -66,57 +66,33 @@ jobs:
   build-deb:
     name: Build Debian Package (${{ matrix.arch }})
     needs: calculate-version
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        arch: [arm64, amd64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up QEMU
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build in Docker (${{ matrix.arch }})
-        run: |
-          mkdir -p build-output
-
-          cat > Dockerfile.build << 'DOCKERFILE'
-          FROM debian:bookworm
-
-          RUN apt-get update && apt-get install -y \
-              build-essential \
-              cmake \
-              pkg-config \
-              libspdlog-dev \
-              && rm -rf /var/lib/apt/lists/*
-
-          WORKDIR /src
-          COPY . .
-
-          RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DSRTLA_BUILD_TESTS=OFF \
-              -DCMAKE_INSTALL_PREFIX=/usr
-          RUN cmake --build build -j$(nproc)
-          RUN DESTDIR=/output cmake --install build
-          DOCKERFILE
-
-          docker buildx build \
-            --platform linux/${{ matrix.arch }} \
-            --output type=local,dest=build-output \
-            -f Dockerfile.build \
-            .
-
-      - name: Install FPM
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ruby-dev gcc g++
-          sudo gem install fpm
+          sudo apt-get install -y build-essential cmake pkg-config ruby-dev
+
+      - name: Build srtla
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DSRTLA_BUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build -j$(nproc)
+          DESTDIR=$PWD/install cmake --install build
+
+      - name: Install FPM
+        run: sudo gem install fpm
 
       - name: Create packages
         env:
@@ -134,14 +110,12 @@ jobs:
             --maintainer "CERALIVE <contact@ceralive.com>" \
             --url "https://github.com/CERALIVE/srtla" \
             --license "AGPL-3.0" \
-            --depends "srt" \
-            --depends "libspdlog1" \
             -p "dist/srtla_${VERSION}_${ARCH}.deb" \
-            build-output/usr/=/usr/
+            install/usr/=/usr/
 
           # Create .tar.gz archive
           mkdir -p tarball/srtla-${VERSION}
-          cp -r build-output/usr/* tarball/srtla-${VERSION}/
+          cp -r install/usr/* tarball/srtla-${VERSION}/
           cd tarball
           tar -czvf ../dist/srtla_${VERSION}_${ARCH}.tar.gz srtla-${VERSION}
           cd ..
@@ -247,7 +221,6 @@ jobs:
             ```
             srt
               └── srtla (this package)
-                    ├── Depends: srt, libspdlog1
                     │
                     └── Used by: ceracoder → ceralive-device
             ```
