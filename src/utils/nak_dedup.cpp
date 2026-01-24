@@ -1,5 +1,7 @@
 #include "nak_dedup.h"
 
+#include <cstddef>
+
 namespace srtla::utils {
 
 uint64_t NakDeduplicator::hash_nak_payload(const uint8_t *buffer, int length, int prefix_bytes) {
