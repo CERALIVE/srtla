@@ -5,6 +5,6 @@ export interface SrtlaRecArgsResult {
 }
 /**
  * Build CLI args for srtla_rec.
- * Shape: --srtla_port <port> --srt_hostname <host> --srt_port <port> [--verbose]
+ * Shape: --srtla_port <port> --srt_hostname <host> --srt_port <port> [--log_level <level>]
  */
 export declare function buildSrtlaRecArgs(input: SrtlaRecOptionsInput): SrtlaRecArgsResult;

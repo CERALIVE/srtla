@@ -6,11 +6,11 @@ export interface SpawnSrtlaRecOptions {
     spawnOptions?: SpawnOptions;
 }
 export declare function getSrtlaRecExec(execPath?: string): string;
-export declare function spawnSrtlaRec(options: SpawnSrtlaRecOptions): ChildProcess;
+export declare function spawnSrtlaRec(options: SpawnSrtlaRecOptions): import("node:child_process").ChildProcess;
 export declare function sendSrtlaRecHup(): Promise<void>;
 export declare function sendSrtlaRecTerm(): Promise<void>;
 export declare function isSrtlaRecRunning(): Promise<boolean>;
 /**
  * Convenience: build args from options and spawn the process.
  */
-export declare function buildAndSpawnSrtlaRec(options: SrtlaRecOptionsInput, spawnOptions?: SpawnOptions): ChildProcess;
+export declare function buildAndSpawnSrtlaRec(options: SrtlaRecOptionsInput, spawnOptions?: SpawnOptions): import("node:child_process").ChildProcess;
