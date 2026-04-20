@@ -1,0 +1,50 @@
+name: TypeScript Bindings
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bindings/typescript/**"
+      - ".github/workflows/bindings.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "bindings/typescript/**"
+      - ".github/workflows/bindings.yml"
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/typescript
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type-check
+        run: bun run lint
+
+      - name: Build
+        run: bun run build
+
+      - name: Run tests
+        run: bun test
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "## TypeScript bindings green" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Type-check: bun run lint" >> $GITHUB_STEP_SUMMARY
+          echo "- Build: bun run build" >> $GITHUB_STEP_SUMMARY
+          echo "- Tests: bun test" >> $GITHUB_STEP_SUMMARY
