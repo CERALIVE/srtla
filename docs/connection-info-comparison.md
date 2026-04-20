@@ -25,7 +25,12 @@ The system runs **both algorithms in parallel**:
 Both algorithms produce:
 - Error points (quality assessment)
 - Weight percentage (connection quality: 100% = best, 10% = worst)
-- ACK throttle factor (load balancing control: 1.0 = no throttling, 0.2 = minimum)
+
+> **Note**: Earlier versions also produced an "ACK throttle factor"
+> per algorithm. ACK throttling was removed by upstream commit
+> `a89aa74` (it caused a feedback loop with senders that tied SRT
+> window growth to ACK timing) and is no longer used. The comparison
+> framework now focuses on error points and weight only.
 
 ## Comparison Mode Flag
 
@@ -53,7 +58,7 @@ Every keepalive with connection info logs the detailed telemetry:
 When algorithms **disagree** (weight delta ≥ 5% OR error points delta ≥ 5), you'll see:
 
 ```
-[INFO] [192.168.1.100:5000] [ALGO_CMP] ConnInfo: Err=15 W=70% T=0.70 | Legacy: Err=5 W=85% T=0.85 | Delta: E=+10 W=-15% T=-0.15
+[INFO] [192.168.1.100:5000] [ALGO_CMP] ConnInfo: Err=15 W=70% | Legacy: Err=5 W=85% | Delta: E=+10 W=-15%
 ```
 
 This shows:
@@ -69,10 +74,10 @@ Every 5 seconds (or when quality changes), you'll see side-by-side comparison:
 
 ```
 [INFO] [Group: 0x...] Connection parameters adjusted:
-[INFO] [192.168.1.100:5000] [COMPARISON] ConnInfo: Weight=70%, Throttle=0.70, ErrPts=15 | Legacy: Weight=85%, Throttle=0.85, ErrPts=5 | Delta: W=-15%, T=-0.15, E=+10
+[INFO] [192.168.1.100:5000] [COMPARISON] ConnInfo: Weight=70%, ErrPts=15 | Legacy: Weight=85%, ErrPts=5 | Delta: W=-15%, E=+10
 ```
 
-This shows the final decisions from both algorithms for all connections.
+This shows the final weight decisions from both algorithms for all connections.
 
 ## What the Deltas Mean
 
@@ -91,12 +96,6 @@ This shows the final decisions from both algorithms for all connections.
 - **Negative (-)**: Connection Info gives **lower weight** (more pessimistic)
   - Common; Connection Info detects RTT/NAK/window issues legacy misses
 - **Zero or small**: Both algorithms agree on connection quality
-
-### Throttle Delta
-
-- **Positive (+)**: Connection Info throttles **less** (more aggressive ACKs)
-- **Negative (-)**: Connection Info throttles **more** (fewer ACKs, shifts load away)
-- Follows weight delta (throttle = max(0.2, weight/100))
 
 ## Key Differences Between Algorithms
 
@@ -122,14 +121,14 @@ This shows the final decisions from both algorithms for all connections.
 
 **Comparison:**
 ```
-[ALGO_CMP] ConnInfo: Err=25 W=70% T=0.70 | Legacy: Err=5 W=85% T=0.85 | Delta: E=+20 W=-15% T=-0.15
+[ALGO_CMP] ConnInfo: Err=25 W=70% | Legacy: Err=5 W=85% | Delta: E=+20 W=-15%
 ```
 
 **Interpretation:**
 - Connection Info detects high RTT (350ms > 200ms threshold) → +10 error points
 - RTT variance penalty → +10 more error points
 - Legacy only sees bandwidth/loss, doesn't detect RTT issue
-- **Result**: Connection Info throttles more aggressively (shifts load to better connections)
+- **Result**: Connection Info marks the link as much lower quality, which sender-side scoring will weigh against it
 
 ### Scenario 2: High NAK Rate
 
@@ -140,14 +139,14 @@ This shows the final decisions from both algorithms for all connections.
 
 **Comparison:**
 ```
-[ALGO_CMP] ConnInfo: Err=50 W=10% T=0.20 | Legacy: Err=10 W=70% T=0.70 | Delta: E=+40 W=-60% T=-0.50
+[ALGO_CMP] ConnInfo: Err=50 W=10% | Legacy: Err=10 W=70% | Delta: E=+40 W=-60%
 ```
 
 **Interpretation:**
 - High NAK rate (500 NAKs) → +20-40 error points (Connection Info only)
 - High window utilization (2048/4096 = 50%) → potential congestion
 - Legacy doesn't see sender NAKs, only receiver packet loss
-- **Result**: Connection Info severely throttles, Legacy doesn't recognize severity
+- **Result**: Connection Info marks the link `WEIGHT_CRITICAL`; Legacy doesn't recognize severity
 
 ### Scenario 3: Both Algorithms Agree
 
@@ -282,7 +281,7 @@ cd build && make -j$(nproc)
 - Comparison mode has **minimal performance impact** (both algorithms are lightweight)
 - Logs are **non-spammy**: Only shown when algorithms diverge meaningfully (≥5% delta)
 - Both algorithms use the **same data** from the same keepalive packets
-- The **Connection Info algorithm is active** (makes actual ACK throttling decisions)
+- The **Connection Info algorithm is active** (drives weight assignments used by sender-side scoring)
 - The **Legacy algorithm runs in parallel** for comparison only (results logged but not used)
 - Disable comparison mode in production once algorithm is validated
 
@@ -331,7 +330,7 @@ Without this telemetry, these penalties are all **zero**, making it functionally
 **Quality Evaluation (every 5 seconds):**
 ```
 [INFO] [Group: 0x...] Connection parameters adjusted:
-[INFO] [IP:PORT] [COMPARISON] ConnInfo: Weight=85%, Throttle=0.85, ErrPts=10 | Legacy: Weight=85%, Throttle=0.85, ErrPts=10 | Delta: W=+0%, T=+0.00, E=+0
+[INFO] [IP:PORT] [COMPARISON] ConnInfo: Weight=85%, ErrPts=10 | Legacy: Weight=85%, ErrPts=10 | Delta: W=+0%, E=+0
 ```
 
 Notice: **Delta is zero** because both algorithms see the same data and make identical decisions.

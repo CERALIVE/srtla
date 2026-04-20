@@ -1,0 +1,54 @@
+# Force LF line endings for all text files in the repo.
+# Linux is the primary build target; mixing CRLF/LF causes blame churn and
+# review noise. See `.git-blame-ignore-revs` for the renormalization commits.
+
+* text=auto eol=lf
+
+# Source code
+*.c       text eol=lf
+*.h       text eol=lf
+*.cpp     text eol=lf
+*.hpp     text eol=lf
+*.cc      text eol=lf
+*.hh      text eol=lf
+
+# Build / config
+*.cmake   text eol=lf
+CMakeLists.txt text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.toml    text eol=lf
+*.sh      text eol=lf
+
+# Web / TS bindings
+*.ts      text eol=lf
+*.tsx     text eol=lf
+*.js      text eol=lf
+*.jsx     text eol=lf
+*.mjs     text eol=lf
+*.cjs     text eol=lf
+*.css     text eol=lf
+*.html    text eol=lf
+
+# Docs
+*.md      text eol=lf
+*.txt     text eol=lf
+LICENSE   text eol=lf
+
+# Lock / generated text
+bun.lock          text eol=lf
+package-lock.json text eol=lf
+
+# Binary assets
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.tar  binary
+*.bin  binary
