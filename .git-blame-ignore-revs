@@ -1,0 +1,9 @@
+# Revisions that perform whitespace-only or formatting-only changes.
+# Configure git to ignore these for blame:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Partial LF normalization (CMakeLists.txt, README.md, src/utils/nak_dedup.cpp).
+bf54a67a6a035d0f0a98128aaaca3b38e0152d84
+
+# Repo-wide LF normalization + .gitattributes (feat/merge-irlserver-main-2026-04).
+f929260687c784fdf93a3746d21f9a714021b7af

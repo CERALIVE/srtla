@@ -35,8 +35,8 @@ add_library(common_obj OBJECT
     src/common.c
     src/common.h)
 
-add_executable(srtla_rec
-    src/receiver_main.cpp
+# Receiver-side core (linkable by srtla_rec and the test suite).
+add_library(receiver_core_obj OBJECT
     src/connection/connection.cpp
     src/connection/connection_group.cpp
     src/connection/connection_registry.cpp
@@ -48,12 +48,22 @@ add_executable(srtla_rec
     src/utils/network_utils.cpp
     src/utils/nak_dedup.cpp)
 
+target_include_directories(receiver_core_obj PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(receiver_core_obj PUBLIC spdlog::spdlog)
+target_compile_features(receiver_core_obj PUBLIC cxx_std_17)
+target_compile_options(receiver_core_obj PRIVATE -Wall -Wextra)
+
+add_executable(srtla_rec
+    src/receiver_main.cpp)
+
 target_include_directories(srtla_rec PRIVATE
     "deps/argparse/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 target_link_libraries(srtla_rec PRIVATE
     common_obj
+    receiver_core_obj
     spdlog::spdlog
 )
 target_compile_features(srtla_rec PRIVATE cxx_std_17)

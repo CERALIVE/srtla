@@ -1,0 +1,39 @@
+[Unit]
+Description=srtla_send - SRT link aggregation sender (CeraLive)
+Documentation=https://github.com/CERALIVE/srtla
+After=network-online.target
+Wants=network-online.target
+# Crash-loop damping (ADR-0005): if srtla_send exits >= StartLimitBurst times
+# within StartLimitIntervalSec, systemd stops respawning and enters the failed
+# state instead of a tight restart loop.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+# Type=notify: srtla_send calls sd_notify(READY=1) once its listen socket is
+# bound and at least one upstream connection is open.
+Type=notify
+NotifyAccess=main
+
+# Per-stream arguments (listen port, upstream host/port, source-IP list file)
+# are written by the CeraUI control plane before it starts this unit. The "-"
+# prefix makes the file optional so the unit still validates when absent.
+EnvironmentFile=-/run/ceralive/srtla-send.env
+ExecStart=/usr/bin/srtla_send $SRTLA_SEND_ARGS
+
+# systemd is the SOLE process-restart authority (ADR-0005).
+Restart=on-failure
+RestartSec=5
+
+# Hardware-style watchdog: srtla_send pets WATCHDOG=1 from its main loop. If the
+# bonding loop hangs/zombies, the ping stops, systemd kills the process and
+# Restart= respawns it. WatchdogSec is kept larger than ceracoder's SRT
+# reconnect backoff cap (30s, Task 8) so transient cellular link churn never
+# trips it; 90s matches ceracoder.service.
+WatchdogSec=90
+
+KillMode=mixed
+SyslogIdentifier=srtla_send
+
+[Install]
+WantedBy=multi-user.target

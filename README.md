@@ -24,12 +24,14 @@ This is a fork of the [BELABOX SRTLA project](https://github.com/BELABOX/srtla),
 
 ## Features
 
-- Support for link aggregation across multiple network connections
-- Automatic management of connection groups and individual connections
-- Robust error handling and timeouts for inactive connections
-- Logging of connection details for easy diagnostics
-- Improved load balancing through ACK throttling
-- Connection recovery mechanism for temporary network issues
+- Link aggregation across multiple network connections
+- Connection groups with per-connection quality tracking
+- Cellular-resilient timeouts and NAT keepalive padding
+- Broadcast ACK/NAK delivery across all connections in a group
+- Batch packet I/O (`recvmmsg`/`sendmmsg`) for low syscall overhead
+- Connection-recovery mode for temporary network issues
+- Comprehensive docs (network setup, troubleshooting, protocol)
+- TypeScript bindings for `srtla_send` / `srtla_rec`
 
 ## Quick Start
 
@@ -136,12 +138,18 @@ srtla_rec --srtla_port <port> --srt_hostname <host> --srt_port <port> [--verbose
 
 ### How It Works
 
-1. srtla_rec creates a UDP socket for incoming SRTLA connections.
-2. Clients register with srtla_rec and create connection groups.
+1. `srtla_rec` creates a UDP socket for incoming SRTLA connections.
+2. Clients register with `srtla_rec` and create connection groups.
 3. Multiple connections can be added to a group.
-4. Data is received across all connections and forwarded to the SRT server.
-5. ACK packets are sent across all connections for timely delivery.
-6. Inactive connections and groups are automatically cleaned up.
+4. Data is received across all connections (via `recvmmsg` batches) and
+   forwarded to the SRT server.
+5. SRT control packets (ACK and NAK) are broadcast to every connection
+   in the group via `sendmmsg` so a single bad link cannot stall
+   retransmits. SRT handshakes go to the originating link only.
+6. Small control packets are padded to 32 bytes via `pad_sendto` to
+   keep cellular NAT mappings warm.
+7. Inactive connections and groups are automatically cleaned up after
+   `CONN_TIMEOUT` / `GROUP_TIMEOUT` seconds.
 
 ### Two-phase Registration Process
 
@@ -157,59 +165,72 @@ The receiver can send error responses:
 - `SRTLA_REG_ERR`: Operation temporarily failed
 - `SRTLA_REG_NGP`: Invalid ID, group must be re-registered
 
-## Enhanced Load Balancing and Recovery
+## Load Balancing and Recovery
 
-This version includes improvements to address key issues in the original implementation:
+### How load is distributed across links
+
+Load distribution is driven by the **sender** (`srtla_send`), which scores
+each connection on window size and in-flight packets and prefers better
+links automatically. The receiver supports this by:
+
+- **Broadcasting ACK/NAK control packets** to every connection in a group,
+  so loss on the most-recent connection cannot stall retransmits.
+- **Tracking per-connection quality** (`weight_percent`, error points)
+  for telemetry and operator visibility.
+- **Padding small control packets** to 32 bytes via `pad_sendto`, so
+  cellular NAT mappings remain warm.
+
+> **Why no ACK throttling?** Earlier CeraLive builds delayed SRTLA ACKs as
+> a back-pressure mechanism. That created a positive feedback loop with
+> senders (notably Moblin) that tie SRT window growth to ACK timing —
+> throttled ACKs slowed window growth, the link looked worse, more
+> throttling kicked in, audio glitches followed. Upstream removed the
+> throttling and CeraLive aligned with that decision; SRTLA ACKs are now
+> sent unconditionally every `RECV_ACK_INT` (10) packets.
 
 ### Connection Recovery
 
-In the original implementation, connections with temporary problems were completely disabled. Now:
+Connections with temporary problems are not disabled outright:
 
-- Connections showing signs of recovery enter a "recovery mode"
-- These connections receive more frequent keepalive packets for a set period (5 seconds)
-- After successful recovery, they are fully reactivated for data transmission
-- Recovery attempts are abandoned after a certain time if unsuccessful
-
-### ACK Throttling for Load Balancing
-
-The central innovation is ACK throttling for load distribution:
-
-1. The SRT/SRTLA client (srtla_send) selects connections based on a score derived from window size and in-flight packets
-2. The window size in the client is adjusted when ACKs are received
-3. By selectively throttling ACK frequency, we indirectly control how quickly the window grows
-4. This causes the client to prefer better connections without requiring client modifications
+- Connections showing signs of recovery enter a "recovery mode".
+- Those connections receive more frequent keepalive packets for a set
+  period (`RECOVERY_CHANCE_PERIOD`, 5 seconds).
+- After successful recovery they are fully reactivated.
+- Recovery attempts are abandoned after that period if unsuccessful.
 
 ### Connection Quality Assessment
 
-Connection quality is assessed by measuring:
+Connection quality is assessed by:
 
-- **Bandwidth Performance**: Compares actual bandwidth to expected bandwidth
-- **Packet Loss**: Higher loss rates lead to more error points
-- **Dynamic Bandwidth Evaluation**: Connections evaluated against median or minimum thresholds
-- **Grace Period**: New connections receive a 10-second grace period before penalties
+- **Bandwidth performance** (actual vs expected throughput).
+- **Packet loss** (higher loss -> more error points).
+- **Dynamic bandwidth evaluation** against median / minimum thresholds.
+- **Grace period** (`CONNECTION_GRACE_PERIOD`, 10 s) before new
+  connections accumulate penalties.
 
 Weight levels:
-- 100% (WEIGHT_FULL): Optimal connection
-- 85% (WEIGHT_EXCELLENT): Excellent connection
-- 70% (WEIGHT_DEGRADED): Slightly impaired connection
-- 55% (WEIGHT_FAIR): Fair connection
-- 40% (WEIGHT_POOR): Severely impaired connection
-- 10% (WEIGHT_CRITICAL): Critically impaired connection
+- 100% (`WEIGHT_FULL`): Optimal connection.
+- 85% (`WEIGHT_EXCELLENT`): Excellent connection.
+- 70% (`WEIGHT_DEGRADED`): Slightly impaired.
+- 55% (`WEIGHT_FAIR`): Fair.
+- 40% (`WEIGHT_POOR`): Severely impaired.
+- 10% (`WEIGHT_CRITICAL`): Critically impaired.
 
 ### Configuration Parameters
 
-Adjustable parameters for optimization:
+Receiver tunables (all live in `src/receiver_config.h`):
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `KEEPALIVE_PERIOD` | 1s | Interval for keepalive packets during recovery |
-| `RECOVERY_CHANCE_PERIOD` | 5s | Period for connection recovery attempt |
-| `CONN_QUALITY_EVAL_PERIOD` | 5s | Interval for evaluating connection quality |
-| `ACK_THROTTLE_INTERVAL` | 100ms | Base interval for ACK throttling |
-| `MIN_ACK_RATE` | 20% | Minimum ACK rate to keep connections alive |
+| `KEEPALIVE_PERIOD` | 1 s | Interval for keepalive packets during recovery |
+| `RECOVERY_CHANCE_PERIOD` | 5 s | Period for connection recovery attempt |
+| `CONN_QUALITY_EVAL_PERIOD` | 5 s | Interval for evaluating connection quality |
+| `RECV_ACK_INT` | 10 packets | SRTLA ACK is emitted every N data packets |
+| `GROUP_TIMEOUT` | 30 s | Idle group is reaped after this period (cellular-resilient) |
+| `CONN_TIMEOUT` | 15 s | Per-connection inactivity timeout (cellular-resilient) |
 | `MIN_ACCEPTABLE_TOTAL_BANDWIDTH_KBPS` | 1000 | Minimum total bandwidth for acceptable streaming |
-| `GOOD_CONNECTION_THRESHOLD` | 50% | Threshold for considering a connection "good" |
-| `CONNECTION_GRACE_PERIOD` | 10s | Grace period before applying penalties |
+| `GOOD_CONNECTION_THRESHOLD` | 50% | Threshold for a "good" connection |
+| `CONNECTION_GRACE_PERIOD` | 10 s | Grace period before applying penalties |
 
 ## Socket Information
 

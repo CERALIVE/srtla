@@ -101,7 +101,7 @@ jobs:
         run: |
           mkdir -p dist
 
-          # Create .deb package
+          # Create .deb package (also ships the systemd unit, ADR-0005)
           fpm -s dir -t deb \
             -n srtla \
             -v "${VERSION}" \
@@ -111,7 +111,8 @@ jobs:
             --url "https://github.com/CERALIVE/srtla" \
             --license "AGPL-3.0" \
             -p "dist/srtla_${VERSION}_${ARCH}.deb" \
-            install/usr/=/usr/
+            install/usr/=/usr/ \
+            packaging/systemd/srtla-send.service=/usr/lib/systemd/system/srtla-send.service
 
           # Create .tar.gz archive
           mkdir -p tarball/srtla-${VERSION}

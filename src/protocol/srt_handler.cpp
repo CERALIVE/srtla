@@ -1,4 +1,9 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "srt_handler.h"
+#include "pad_sendto.h"
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -6,6 +11,8 @@
 #include <unistd.h>
 
 #include <spdlog/spdlog.h>
+
+#include "../receiver_config.h"
 
 extern "C" {
 #include "../common.h"
@@ -33,22 +40,52 @@ void SRTHandler::handle_srt_data(connection::ConnectionGroupPtr group) {
         return;
     }
 
-    if (is_srt_ack(buf, n)) {
-        for (auto &conn : group->connections()) {
-            int ret = sendto(srtla_socket_, &buf, n, 0,
-                             reinterpret_cast<const struct sockaddr *>(&conn->address()), sizeof(struct sockaddr_storage));
-            if (ret != n) {
-                spdlog::error("[{}:{}] [Group: {}] Failed to send the SRT ack",
-                              print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
-                              port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
-                              static_cast<void *>(group.get()));
+    // Broadcast ACKs and NAKs to all connections to ensure they reach the
+    // sender even if some connections are dead. Other packets go to last_address.
+    if (is_srt_ack(buf, n) || is_srt_nak(buf, n)) {
+        const auto &connections = group->connections();
+        size_t num_conns = connections.size();
+
+        if (num_conns == 0) {
+            return;
+        }
+
+        // Use sendmmsg to send to all connections in a single syscall
+        struct mmsghdr msgs[MAX_CONNS_PER_GROUP];
+        struct iovec iovecs[MAX_CONNS_PER_GROUP];
+
+        size_t msg_count = 0;
+        for (const auto &conn : connections) {
+            if (msg_count >= MAX_CONNS_PER_GROUP) {
+                break;
             }
+
+            iovecs[msg_count].iov_base = buf;
+            iovecs[msg_count].iov_len = static_cast<size_t>(n);
+
+            msgs[msg_count].msg_hdr.msg_name = const_cast<struct sockaddr_storage *>(&conn->address());
+            msgs[msg_count].msg_hdr.msg_namelen = sizeof(struct sockaddr_storage);
+            msgs[msg_count].msg_hdr.msg_iov = &iovecs[msg_count];
+            msgs[msg_count].msg_hdr.msg_iovlen = 1;
+            msgs[msg_count].msg_hdr.msg_control = nullptr;
+            msgs[msg_count].msg_hdr.msg_controllen = 0;
+            msgs[msg_count].msg_hdr.msg_flags = 0;
+
+            msg_count++;
+        }
+
+        int sent = sendmmsg(srtla_socket_, msgs, static_cast<unsigned int>(msg_count), 0);
+        if (sent < 0) {
+            spdlog::error("[Group: {}] sendmmsg failed: {}", static_cast<void *>(group.get()), strerror(errno));
+        } else if (static_cast<size_t>(sent) < msg_count) {
+            spdlog::warn("[Group: {}] sendmmsg sent only {}/{} messages",
+                         static_cast<void *>(group.get()), sent, msg_count);
         }
     } else {
-        int ret = sendto(srtla_socket_, &buf, n, 0,
+        int ret = pad_sendto(srtla_socket_, &buf, n, 0,
                          reinterpret_cast<const struct sockaddr *>(&group->last_address()), sizeof(struct sockaddr_storage));
         if (ret != n) {
-            spdlog::error("[{}:{}] [Group: {}] Failed to send the SRT packet",
+            spdlog::error("[{}:{}] [Group: {}] Failed to send SRT packet",
                           print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&group->last_address()))),
                           port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&group->last_address()))),
                           static_cast<void *>(group.get()));
@@ -115,7 +152,6 @@ bool SRTHandler::ensure_group_socket(connection::ConnectionGroupPtr group) {
     }
 
     if (ret != 0) {
-        
         spdlog::error("[Group: {}] Failed to connect to SRT server: {}", static_cast<void *>(group.get()), strerror(errno));
         close(sock);
         remove_group(group);
