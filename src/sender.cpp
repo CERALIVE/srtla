@@ -31,6 +31,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "sd_notify.h"
 #include "sender.h"
 #include <argparse/argparse.hpp>
 
@@ -801,7 +802,34 @@ int main(int argc, char **argv) {
 
   int info_int = LOG_PKT_INT;
 
+  /* Startup is complete: the listen socket is bound and at least one upstream
+     connection is open. Tell systemd we are READY so a Type=notify unit leaves
+     the "activating" state. No-op when not run under systemd. */
+  sd_notify::ready();
+
+  /* Pet the systemd watchdog (WatchdogSec=) from the main loop at half the
+     configured interval. Reaching the top of the loop proves the bonding loop
+     is still running; if it hangs/zombies the ping stops and systemd kills +
+     respawns the process (ADR-0005). wd_interval_ms == 0 disables petting when
+     no watchdog is configured. */
+  const unsigned long long wd_usec = sd_notify::watchdog_usec();
+  const uint64_t wd_interval_ms = wd_usec > 0 ? (wd_usec / 1000ULL) / 2ULL : 0;
+  uint64_t wd_last_ms = 0;
+  if (wd_interval_ms > 0) {
+    get_ms(&wd_last_ms);
+    spdlog::info("systemd watchdog enabled: petting every {} ms (WatchdogSec={} s)",
+                 wd_interval_ms, wd_usec / 1000000ULL);
+  }
+
   while (1) {
+    if (wd_interval_ms > 0) {
+      uint64_t now_ms = 0;
+      if (get_ms(&now_ms) == 0 && (now_ms - wd_last_ms) >= wd_interval_ms) {
+        sd_notify::watchdog();
+        wd_last_ms = now_ms;
+      }
+    }
+
     if (do_update_conns) {
       update_conns(source_ip_file);
       do_update_conns = 0;
