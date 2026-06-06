@@ -19,9 +19,9 @@ Remotes:
 - `origin` — https://github.com/CERALIVE/srtla (canonical)
 - `irlserver` — https://github.com/irlserver/srtla (upstream)
 
-## WARNING: UPSTREAM MERGE IN PROGRESS
+## UPSTREAM MERGE STATUS
 
-An upstream merge from `irlserver/srtla` is in progress. See `.cursor/plans/srtla-merge-upstream.plan.md` for status. **The TS bindings API may be in flux.** Don't write code that depends on binding stability until the merge lands.
+The `irlserver/main` catch-up merge is **complete** (pinned at `aa66a88`, 63/63 ctest green). The `irlserver` remote is retained for future catch-ups. The TS bindings API is **settled** — safe to depend on. See `.cursor/plans/srtla-merge-upstream.plan.md` for the full merge record.
 
 ## STRUCTURE
 
@@ -59,6 +59,6 @@ cd bindings/typescript && bun install && bun run build
 
 ## ANTI-PATTERNS
 
-- Don't assume bindings API is stable — upstream merge is in progress
+- Don't modify the TS bindings API without checking `UPSTREAM MERGE STATUS` above — the API is settled; changes need deliberate versioning
 - Don't add `srtla` to `irl-srt-server` — it uses system libsrt directly, no srtla dep
 - Don't confuse `srtla_send` (device) with `srtla_rec` (server/cloud)
