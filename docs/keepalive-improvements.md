@@ -1,3 +1,14 @@
+> **Historical Reference — Superseded by Upstream Merge**
+>
+> The Phase 1-3 keepalive improvements proposed in this document were superseded by the
+> upstream merge from `irlserver/main` (completed at commit `aa66a88`). ACK throttling
+> was removed and quality evaluation was enhanced upstream. This document is retained as
+> a historical record of the design exploration. For the current model, see
+> [`EXTENDED_KEEPALIVE_FIX.md`](../EXTENDED_KEEPALIVE_FIX.md) and
+> [`docs/HOW_IT_WORKS.md`](HOW_IT_WORKS.md).
+
+---
+
 # Keepalive-Based Algorithm Improvements
 
 ## Overview
