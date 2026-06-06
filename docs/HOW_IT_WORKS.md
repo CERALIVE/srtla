@@ -2,12 +2,15 @@
 
 This document explains the SRTLA protocol, architecture, and internal algorithms.
 
+For quick-start usage, command reference, and build instructions, see the [README](../README.md).
+
 ## Table of Contents
 
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Protocol](#protocol)
 - [Congestion Control](#congestion-control)
+- [Connection Recovery](#connection-recovery)
 - [Timeouts & Limits](#timeouts--limits)
 
 ---
@@ -16,10 +19,12 @@ This document explains the SRTLA protocol, architecture, and internal algorithms
 
 SRTLA (SRT Link Aggregation) is a protocol that sits between an SRT encoder and SRT server, bonding multiple network connections to increase bandwidth and reliability.
 
+This implementation is a fork of [BELABOX/srtla](https://github.com/BELABOX/srtla) with contributions from IRLToolkit, IRLServer, OpenIRL, and CeraLive. The `irlserver/main` upstream was merged in full (commit `aa66a88`), bringing upstream-aligned connection handling, ACK-throttling removal, and quality evaluation enhancements.
+
 **Key capabilities:**
-- **Bandwidth aggregation**: Combine 3× 5Mbps connections into ~15Mbps
+- **Bandwidth aggregation**: Combine multiple connections for higher total throughput
 - **Redundancy**: If one link fails, others continue
-- **Adaptive load balancing**: Better links get more traffic
+- **Adaptive load balancing**: Better links get more traffic automatically
 
 ---
 
@@ -66,8 +71,10 @@ The sender:
 The receiver:
 1. Listens for incoming SRTLA connections
 2. Groups connections from the same sender (via registration handshake)
-3. Reassembles packets and forwards to downstream SRT server
-4. Sends SRTLA ACKs to help sender with congestion control
+3. Receives packets across all connections via `recvmmsg` batches and forwards to downstream SRT server
+4. Broadcasts SRT ACK/NAK control packets to every connection in the group via `sendmmsg`, so a single bad link cannot stall retransmits
+5. Sends SRTLA ACKs to help sender with load distribution
+6. Pads small control packets to 32 bytes (`pad_sendto`) to keep cellular NAT mappings warm
 
 ---
 
@@ -149,7 +156,7 @@ Sender                     NAT                      Receiver
 
 ## Congestion Control
 
-SRTLA uses a window-based algorithm to distribute packets across links.
+SRTLA uses a window-based algorithm on the sender to distribute packets across links.
 
 ### Link Score
 
@@ -179,19 +186,30 @@ The link with the highest score is selected for each packet.
 
 ### Behavior
 
-```
-Good link (low loss):          Poor link (high loss):
-  window: 55,000                 window: 5,000
-  in_flight: 10                  in_flight: 2
-  score: 5,000                   score: 1,666
-  
-  → Gets 3× more packets         → Gets fewer packets
-```
-
-This naturally:
+A link with a large window and few in-flight packets scores highest and receives the most traffic. A link with a small window (due to packet loss) scores lower and gets fewer packets. This naturally:
 - Sends more through fast/reliable links
 - Avoids overloading slow/lossy links
 - Recovers slowly after packet loss (prevents oscillation)
+
+### ACK Delivery
+
+SRTLA ACKs are sent unconditionally every `RECV_ACK_INT` (10) packets. Earlier builds delayed ACKs as a back-pressure mechanism, but that created a feedback loop with senders that tie SRT window growth to ACK timing: throttled ACKs slowed window growth, the link looked worse, more throttling kicked in, and audio glitches followed. The `irlserver` upstream removed this throttling; CeraLive aligned with that decision at the merge.
+
+---
+
+## Connection Recovery
+
+Connections with temporary problems are not disabled outright. The receiver tracks per-connection quality and applies a graduated response:
+
+### Quality Weights
+
+The receiver assigns each connection a weight level that influences how much traffic it receives. Levels range from `WEIGHT_FULL` (optimal) down through `WEIGHT_EXCELLENT`, `WEIGHT_DEGRADED`, `WEIGHT_FAIR`, `WEIGHT_POOR`, and `WEIGHT_CRITICAL` (critically impaired). See `src/receiver_config.h` for the exact weight values.
+
+Quality is assessed by bandwidth performance, packet loss, and dynamic bandwidth evaluation against median/minimum thresholds. New connections have a grace period (`CONNECTION_GRACE_PERIOD`) before penalties apply.
+
+### Recovery Mode
+
+Connections showing signs of recovery enter a recovery mode and receive more frequent keepalive packets for `RECOVERY_CHANCE_PERIOD`. After successful recovery they are fully reactivated; if recovery fails within that window, the connection is abandoned.
 
 ---
 
@@ -199,29 +217,34 @@ This naturally:
 
 ### Sender
 
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `CONN_TIMEOUT` | 4 seconds | Link considered dead if no response |
-| `REG2_TIMEOUT` | 4 seconds | Wait for REG2 after sending REG1 |
-| `REG3_TIMEOUT` | 4 seconds | Wait for REG3 after sending REG2 |
-| `GLOBAL_TIMEOUT` | 10 seconds | Exit if no links connect |
-| `IDLE_TIME` | 1 second | Send keepalive after this idle time |
-| `HOUSEKEEPING_INT` | 1000 ms | Check connection health interval |
+| Parameter | Description |
+|-----------|-------------|
+| `CONN_TIMEOUT` | Link considered dead if no response |
+| `REG2_TIMEOUT` | Wait for REG2 after sending REG1 |
+| `REG3_TIMEOUT` | Wait for REG3 after sending REG2 |
+| `GLOBAL_TIMEOUT` | Exit if no links connect within this window |
+| `IDLE_TIME` | Send keepalive after this idle time |
+| `HOUSEKEEPING_INT` | Check connection health interval |
 
 ### Receiver
 
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `MAX_CONNS_PER_GROUP` | 16 | Maximum links per streaming session |
-| `MAX_GROUPS` | 200 | Maximum concurrent streaming sessions |
-| `CONN_TIMEOUT` | 10 seconds | Remove inactive links |
-| `GROUP_TIMEOUT` | 10 seconds | Remove empty groups |
-| `CLEANUP_PERIOD` | 3 seconds | Garbage collection interval |
-| `RECV_ACK_INT` | 10 packets | Send SRTLA ACK every N packets |
+Post-merge timeouts are tuned for cellular resilience. See `src/receiver_config.h` for current values.
+
+| Parameter | Description |
+|-----------|-------------|
+| `MAX_CONNS_PER_GROUP` | Maximum links per streaming session |
+| `MAX_GROUPS` | Maximum concurrent streaming sessions |
+| `CONN_TIMEOUT` | Per-connection inactivity timeout (cellular-resilient) |
+| `GROUP_TIMEOUT` | Idle group reap timeout (cellular-resilient; longer than pre-merge) |
+| `RECV_ACK_INT` | Send SRTLA ACK every N data packets |
+| `KEEPALIVE_PERIOD` | Keepalive interval during connection recovery |
+| `RECOVERY_CHANCE_PERIOD` | Window for a connection to recover before abandonment |
+| `CONN_QUALITY_EVAL_PERIOD` | Interval for evaluating per-connection quality |
+| `CONNECTION_GRACE_PERIOD` | Grace period before new connections accumulate penalties |
 
 ### Socket Buffers
 
-| Buffer | Size | Why |
-|--------|------|-----|
-| `SEND_BUF_SIZE` | 32 MB | Handle bursts without dropping |
-| `RECV_BUF_SIZE` | 32 MB | Buffer incoming packets during processing |
+| Buffer | Why |
+|--------|-----|
+| `SEND_BUF_SIZE` | Handle bursts without dropping |
+| `RECV_BUF_SIZE` | Buffer incoming packets during processing |
