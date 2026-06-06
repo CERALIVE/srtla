@@ -1,6 +1,6 @@
 # SRTLA Troubleshooting Guide
 
-Common issues and how to diagnose them.
+Common issues and how to diagnose them. For protocol internals and the connection model, see [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 
 ## Table of Contents
 
@@ -9,6 +9,7 @@ Common issues and how to diagnose them.
 - [Connections Keep Dropping](#connections-keep-dropping)
 - [High Packet Loss](#high-packet-loss)
 - [Stream Stuttering](#stream-stuttering)
+- [Link Quality Looks Wrong](#link-quality-looks-wrong)
 - [Debugging Tools](#debugging-tools)
 
 ---
@@ -182,7 +183,7 @@ If IP disappears and reappears, the modem is unstable.
 srtla_send ... --verbose 2>&1 | grep "window"
 ```
 
-Look for links with window << 20000 (the default).
+Look for links with significantly lower window values than others — those are the ones the sender is already deprioritizing.
 
 **2. Check signal strength (for cellular):**
 ```bash
@@ -233,14 +234,12 @@ sudo sysctl -w net.core.wmem_max=67108864
 
 **2. SRT latency too low**
 
-If your RTT (round-trip time) is high, SRT needs more latency:
+If your round-trip time to the receiver is high, SRT needs more latency headroom to recover from packet loss. Check RTT first:
 ```bash
-# Check RTT to receiver
 ping <receiver_ip>
-
-# SRT latency should be at least 2-3× RTT
-# If RTT is 200ms, use at least 500ms latency
 ```
+
+Set SRT latency to a comfortable multiple of your measured RTT. Too little headroom and SRT can't retransmit in time; too much adds unnecessary delay.
 
 **3. CPU overload**
 
@@ -254,9 +253,54 @@ On receiver:
 top -p $(pidof srtla_rec)
 ```
 
-If CPU is near 100%, consider:
-- Reducing encoder bitrate
-- Using hardware more powerful
+If CPU is saturated, consider reducing encoder bitrate or moving to more capable hardware.
+
+---
+
+## Link Quality Looks Wrong
+
+### Symptoms
+- A link shows poor quality despite good signal
+- One link is consistently deprioritized even though the modem looks healthy
+- Quality weight drops unexpectedly and doesn't recover
+
+### Background
+
+The post-merge receiver tracks per-connection quality using both receiver-side measurements and sender telemetry from keepalive packets. Each connection accumulates error points based on bandwidth, packet loss, RTT, NAK rate, and window utilization. The sender uses these weights to distribute traffic. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for the full quality model.
+
+### Diagnosis
+
+**1. Check source routing first:**
+
+A link that routes through the wrong physical interface will look degraded because its traffic competes with another link on the same path. This is the most common cause of unexpected quality issues.
+
+```bash
+ip rule show
+ip route get 8.8.8.8 from <link_ip>
+```
+
+See [NETWORK_SETUP.md](NETWORK_SETUP.md) for how to fix source routing.
+
+**2. Check for recovery mode:**
+
+A connection in recovery mode receives more frequent keepalives while the receiver waits to see if it stabilizes. Run with `--verbose` and look for recovery-related log messages.
+
+**3. Check the connection info logs:**
+
+If running `srtla_rec --verbose`, look for `ALGO_CMP` log lines. These show per-connection quality assessments and whether the Connection Info algorithm and the legacy algorithm agree. Large divergences point to RTT or NAK issues the receiver can see but the sender hasn't reported yet.
+
+**4. Check for NAT interference:**
+
+Some carriers reset UDP flows mid-stream. If a connection drops and re-registers frequently, the quality evaluator will penalize it. A VPN or different APN may help.
+
+### Solutions
+
+| Problem | Fix |
+|---------|-----|
+| Wrong source routing | Fix policy rules (see [NETWORK_SETUP.md](NETWORK_SETUP.md)) |
+| High RTT on one link | Reposition modem, check signal, try different band |
+| Frequent re-registration | Carrier NAT interference — try VPN or different APN |
+| Link stuck in recovery | Check modem stability with `watch ip addr show <iface>` |
 
 ---
 

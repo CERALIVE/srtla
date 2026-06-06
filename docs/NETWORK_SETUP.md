@@ -2,6 +2,8 @@
 
 This guide explains how to configure your Linux system for proper multi-network bonding with SRTLA.
 
+For protocol internals and how the connection model works, see [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
+
 ## Table of Contents
 
 - [Why This Matters](#why-this-matters)
@@ -21,6 +23,8 @@ Without proper configuration:
 - All your packets go through ONE interface (usually the first one that connected)
 - Your other modems sit idle
 - You get zero benefit from bonding
+
+The post-merge connection model tracks per-connection quality continuously. That quality tracking only produces useful signal when each connection genuinely uses its own link. Misconfigured routing silently undermines the whole system.
 
 ---
 
@@ -366,7 +370,7 @@ sudo resolvconf -u
 
 ### Step 6: UDP Buffer Sizes
 
-SRTLA uses 32MB buffers. Ensure the system allows this:
+SRTLA allocates large socket buffers to handle bursts without dropping packets. Ensure the system allows this:
 
 ```bash
 # Add to /etc/sysctl.conf for persistence
@@ -459,7 +463,7 @@ You should see pings arriving from different source IPs.
 
 ### "All packets go through one interface"
 
-Check `ip rule show` - you should see rules for each IP. If not, the DHCP hook isn't running:
+Check `ip rule show` — you should see rules for each IP. If not, the DHCP hook isn't running:
 - Verify the hook is executable
 - Check `/var/log/syslog` for "SRTLA" messages
 - Try manually running `sudo dhclient usb0`
@@ -481,3 +485,7 @@ Send SIGHUP to reload:
 ```bash
 kill -HUP $(pidof srtla_send)
 ```
+
+### "One link shows poor quality even with good signal"
+
+The post-merge quality evaluator tracks per-connection health continuously. A link that routes through the wrong interface will show degraded quality because its traffic competes with another link's traffic on the same physical path. Verify source routing is correct before assuming the modem or carrier is at fault. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for how quality evaluation works.
