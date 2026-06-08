@@ -21,3 +21,4 @@ bindings/typescript/*.tsbuildinfo
 
 # OpenCode agent state (local only)
 .omo/
+build-debug/
