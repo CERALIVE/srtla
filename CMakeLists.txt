@@ -49,7 +49,8 @@ add_library(receiver_core_obj OBJECT
     src/protocol/srtla_handler.cpp
     src/protocol/srt_handler.cpp
     src/utils/network_utils.cpp
-    src/utils/nak_dedup.cpp)
+    src/utils/nak_dedup.cpp
+    src/utils/auth_rate_limiter.cpp)
 
 target_include_directories(receiver_core_obj PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src")
