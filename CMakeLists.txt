@@ -6,6 +6,9 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/Modules")
 # Options
 option(SRTLA_BUILD_TESTS "Build tests" ON)
 option(SRTLA_ENABLE_CLANG_TIDY "Enable clang-tidy static analysis" OFF)
+# Compatibility harness helpers (mock SRT sink + extended-keepalive probe).
+# OFF by default and the only place srtla links the system libsrt.
+option(BUILD_COMPAT_TESTS "Build compat-test helpers (srt-sink, ext-ka probe)" OFF)
 
 include(FetchContent)
 
@@ -95,6 +98,12 @@ if(SRTLA_BUILD_TESTS)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
     add_subdirectory(tests)
   endif()
+endif()
+
+# Compatibility harness helpers (srt-sink mock endpoint, ext-ka probe).
+if(BUILD_COMPAT_TESTS)
+  add_subdirectory(tests/compat/srt-sink)
+  add_subdirectory(tests/compat/ext-ka-probe)
 endif()
 
 # Custom lint target for manual clang-tidy runs
