@@ -7,7 +7,7 @@ export interface SrtlaSendArgsResult {
 
 /**
  * Build CLI args for srtla_send.
- * Shape: <listen_port> <srtla_host> <srtla_port> <ips_file> [--verbose]
+ * Shape: <listen_port> <srtla_host> <srtla_port> <ips_file> [--verbose] [--stats-file <path>]
  */
 export function buildSrtlaSendArgs(input: SrtlaSendOptionsInput): SrtlaSendArgsResult {
 	const options = srtlaSendOptionsSchema.parse(input);
@@ -19,6 +19,9 @@ export function buildSrtlaSendArgs(input: SrtlaSendOptionsInput): SrtlaSendArgsR
 	];
 	if (options.verbose) {
 		args.push("--verbose");
+	}
+	if (options.statsFile) {
+		args.push("--stats-file", options.statsFile);
 	}
 	return { args, options };
 }

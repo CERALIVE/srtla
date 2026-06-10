@@ -96,3 +96,14 @@ target_include_directories(test_registration_handshake PRIVATE ${CMAKE_SOURCE_DI
 target_compile_features(test_registration_handshake PRIVATE cxx_std_17)
 target_compile_options(test_registration_handshake PRIVATE -Wall -Wextra)
 gtest_discover_tests(test_registration_handshake TEST_PREFIX "registration.")
+
+# Sender telemetry serializer + atomic stats-file publish (Task 18, ADR-001).
+# Pins src/sender_telemetry.h: golden-file schema conformance, the mandated
+# bytes->bits bitrate conversion, empty state, update cadence, and the rename(2)
+# atomicity guarantee under a concurrent reader. Header-only (no srtla object
+# libs); Threads backs the atomicity test's reader/writer.
+srtla_add_test(test_telemetry_emit test_telemetry_emit.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(test_telemetry_emit PRIVATE Threads::Threads)
+target_compile_definitions(test_telemetry_emit PRIVATE
+  TELEMETRY_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
