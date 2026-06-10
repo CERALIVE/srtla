@@ -42,7 +42,15 @@ receivers:
     role: receiver
     build: docker/openirl-receiver/Dockerfile
     tier: blocking
-    notes: "OpenIRL receiver"
+    notes: >-
+      OpenIRL receiver. The compat image builds only the srtla_rec component
+      (the SRTLA->SRT forwarder) from https://github.com/OpenIRL/srtla pinned at
+      e9ba6a36ffaf179e92e06c7e3967637959fff363 (OPENIRL_SRTLA_REF build ARG).
+      The full OpenIRL management stack (srt-live-server + streamid/apikey auth)
+      is intentionally omitted: it cannot forward to a plain SRT sink and so
+      does not fit the SRTLA_PORT/SRT_TARGET_HOST/SRT_TARGET_PORT env contract
+      the harness uses; protocol compat only exercises the SRTLA path. CLI:
+      srtla_rec --srtla_port P --srt_hostname H --srt_port P2. No source patch.
 
   - name: go-srtla
     repo: https://github.com/e04/go-srtla
@@ -58,7 +66,15 @@ receivers:
     role: receiver
     build: docker/go-irl/Dockerfile
     tier: informational
-    notes: "go-irl; headless receiver-only invocation: ./go-irl -srtla_port 5000 -srt_hostname 127.0.0.1 -srt_port 5001"
+    notes: >-
+      go-irl is a full IRL app (SRTLA receiver + SRT proxy + browser source +
+      WebSocket UI). Headless receiver-only invocation:
+      ./go-irl -mode=server -srtla-port=5000 -srt-host=127.0.0.1 -srt-port=5001
+      -mode=server runs ONLY the SRTLA receiver (runSrtla), no proxy/UI.
+      Flags use HYPHENS (go-srtla, a different binary, uses underscores).
+      Build-fix (no source patch): go-irl //go:embed's frontend/dist/index.html,
+      a vite artifact absent from the repo, so the Docker build stages a
+      placeholder to let `go build` succeed; server mode never serves it.
 
 pairs:
   - sender: belabox-srtla-send
