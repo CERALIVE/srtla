@@ -78,9 +78,11 @@ tests/compat/run-matrix.sh --tier blocking                         # whole tier
 - "ours" = local build-dir binaries; external impls = `compat/*` Docker images
   from `tests/compat/docker/` (host network, amd64).
 - Per-pair verdicts land in `tests/compat/results/<pair>/result.json` (gitignored).
-- Pass criteria: handshake ≤5s, `bytes_received ≥ 1000`, `disconnects == 0`,
-  clean SIGTERM teardown. The harness is falsifiable — `--scenario port-mismatch`
-  must fail.
+- Pass criteria: handshake ≤10s (end-to-end first byte; `HANDSHAKE_MAX_MS`),
+  `bytes_received ≥ 1000`, `disconnects == 0`, clean SIGTERM teardown. The harness
+  is falsifiable — `--scenario port-mismatch` must fail.
+- Both tiers (blocking and informational) gate PR CI; only the weekly upstream-drift
+  job (unpinned HEADs) is non-blocking.
 
 ## ANTI-PATTERNS
 

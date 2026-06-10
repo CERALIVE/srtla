@@ -47,6 +47,12 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." >/dev/null 2>&1 && pwd)"
 RESULTS_DIR="${SCRIPT_DIR}/results"
 MATRIX_YAML="${SCRIPT_DIR}/matrix.yaml"
 
+# Max end-to-end first-byte latency that still counts as a timely handshake.
+# On localhost a real handshake is sub-second; the 3-5 s we observe is SRT
+# warm-up. 10 s absorbs CI scheduling jitter (a loaded runner pushed go-srtla to
+# 5.3 s) without masking a stalled handshake — bytes/disconnect checks catch that.
+HANDSHAKE_MAX_MS=10000
+
 log()  { printf '%s\n' "$*" >&2; }
 die()  { printf 'run-matrix: %s\n' "$*" >&2; exit 2; }
 now_ms() { date +%s%3N; }
@@ -360,7 +366,7 @@ run_pair() {
   # line). We do NOT gate on an external impl's exact log wording — that tests
   # their logging, not interop; marker_found is still recorded for visibility.
   # Falsifiability is preserved: --scenario port-mismatch yields no first byte.
-  if [[ "$first_byte" -ge 0 && "$first_byte" -le 5000 ]]; then
+  if [[ "$first_byte" -ge 0 && "$first_byte" -le "$HANDSHAKE_MAX_MS" ]]; then
     if [[ "${KIND[$receiver]}" == "local" ]]; then
       [[ -z "$rx_marker" || "$marker_found" == true ]] && handshake_ok=true
     else
@@ -384,8 +390,8 @@ run_pair() {
     --argjson handshake_ok "$handshake_ok" --argjson bytes_ok "$bytes_ok" \
     --argjson disc_ok "$disc_ok" --argjson teardown_ok "$teardown_ok" \
     --arg marker "$rx_marker" --argjson marker_found "$marker_found" \
-    --argjson handshake_ms "$handshake_ms" \
-    --argjson bytes "$bytes" --argjson first_byte "$first_byte" \
+    --argjson handshake_ms "$handshake_ms" --argjson hmax "$HANDSHAKE_MAX_MS" \
+     --argjson bytes "$bytes" --argjson first_byte "$first_byte" \
     --argjson disc "$disc" --argjson sdur "$sdur" \
     --argjson ext_ka "$ext_ka" --argjson ext_ka_attempted "$ext_ka_attempted" \
     --argjson sink_code "$sink_code" --argjson sender_code "$sender_code" \
@@ -398,7 +404,7 @@ run_pair() {
       criteria:{handshake_ok:$handshake_ok, bytes_ok:$bytes_ok,
                 disconnects_ok:$disc_ok, teardown_ok:$teardown_ok},
       handshake:{marker:$marker, marker_found:$marker_found,
-                 handshake_ms:$handshake_ms, max_ms:5000},
+                 handshake_ms:$handshake_ms, max_ms:$hmax},
       sink:{bytes_received:$bytes, first_byte_ms:$first_byte,
             disconnects:$disc, duration_ms:$sdur},
       extended_ka_detected:$ext_ka, extended_ka_probe_run:($ext_ka_attempted==1),

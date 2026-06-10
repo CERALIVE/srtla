@@ -4,7 +4,8 @@ name: Compatibility Matrix
 # (the single source of truth) via tests/compat/gen-ci-matrix.sh.
 #
 #   * blocking tier  -> gates merges (a failing blocking pair fails this run)
-#   * informational  -> reported but never blocks (continue-on-error)
+#   * informational  -> gates merges on PRs (pins are fixed, so a failure is a
+#                        real regression rather than upstream drift)
 #   * weekly drift    -> re-runs the informational tier against upstream HEADs,
 #                        purely to surface upstream divergence; never blocks
 #
@@ -126,14 +127,13 @@ jobs:
           if-no-files-found: ignore
 
   # --------------------------------------------------------------------- #
-  # Informational tier — reported, never blocks.                          #
+  # Informational tier — gates PRs (pinned SHAs; a failure is a regression). #
   # --------------------------------------------------------------------- #
   compat-informational:
     name: Informational tier
     needs: generate-matrix
     if: github.event_name != 'schedule' && needs.generate-matrix.outputs.has_informational == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
