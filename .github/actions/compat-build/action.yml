@@ -1,0 +1,95 @@
+name: Build compat helpers and external images
+description: >-
+  Install build dependencies, build the local srtla binaries with the
+  compat-test helpers (-DBUILD_COMPAT_TESTS=ON), and build the pinned external
+  Docker images for a tier. The image set and pins are derived from
+  tests/compat/matrix.yaml via gen-ci-matrix.sh, so this action never hardcodes
+  a pair list. Images whose tarball is already present in /tmp/compat-images
+  (restored from cache by the caller) are loaded instead of rebuilt.
+
+inputs:
+  tier:
+    description: "blocking | informational | all"
+    required: false
+    default: all
+  drift:
+    description: 'When "true", build external images at upstream HEAD instead of the pinned SHA (drift detection).'
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install build dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential cmake git pkg-config \
+          libspdlog-dev libsrt-openssl-dev \
+          ffmpeg jq python3-yaml
+
+    - name: Build srtla + compat helpers
+      shell: bash
+      run: |
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_COMPAT_TESTS=ON
+        cmake --build build -j"$(nproc)"
+        test -x build/srtla_send
+        test -x build/srtla_rec
+        test -x build/tests/compat/srt-sink/srt-sink
+
+    - name: Build external Docker images
+      shell: bash
+      env:
+        TIER: ${{ inputs.tier }}
+        DRIFT: ${{ inputs.drift }}
+      run: |
+        mkdir -p /tmp/compat-images
+        images_json="$(tests/compat/gen-ci-matrix.sh --images --tier "$TIER")"
+        count="$(printf '%s' "$images_json" | jq 'length')"
+        echo "tier=$TIER drift=$DRIFT buildable_images=$count"
+        if [ "$count" -eq 0 ]; then
+          echo "No buildable external images for this tier; the harness runs local-only pairs."
+          exit 0
+        fi
+        for (( i = 0; i < count; i++ )); do
+          entry="$(printf '%s' "$images_json" | jq -c ".[$i]")"
+          name="$(printf '%s' "$entry" | jq -r '.name')"
+          image="$(printf '%s' "$entry" | jq -r '.image')"
+          context="$(printf '%s' "$entry" | jq -r '.context')"
+          dockerfile="$(printf '%s' "$entry" | jq -r '.dockerfile')"
+          build_arg="$(printf '%s' "$entry" | jq -r '.build_arg')"
+          pin="$(printf '%s' "$entry" | jq -r '.pin')"
+          repo="$(printf '%s' "$entry" | jq -r '.repo')"
+          tar="/tmp/compat-images/$(printf '%s' "$image" | tr '/:' '__').tar"
+
+          if [ "$DRIFT" != "true" ] && [ -f "$tar" ]; then
+            echo "::group::load cached $image"
+            docker load -i "$tar"
+            echo "::endgroup::"
+            continue
+          fi
+
+          ref="$pin"
+          if [ "$DRIFT" = "true" ]; then
+            ref="$(git ls-remote "$repo" HEAD | awk 'NR==1 {print $1}')"
+            echo "drift: $name upstream HEAD=$ref (pinned was $pin)"
+          fi
+
+          build_args=()
+          if [ -n "$build_arg" ] && [ -n "$ref" ]; then
+            build_args+=(--build-arg "${build_arg}=${ref}")
+          fi
+
+          echo "::group::build $image ($name)"
+          if docker build --platform linux/amd64 "${build_args[@]}" \
+              -t "$image" -f "$dockerfile" "$context"; then
+            if [ "$DRIFT" != "true" ]; then
+              docker save -o "$tar" "$image"
+            fi
+            echo "built $image"
+          else
+            echo "::warning title=compat image::failed to build $image ($name); the harness will SKIP this pair"
+          fi
+          echo "::endgroup::"
+        done
