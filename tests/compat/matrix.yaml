@@ -1,0 +1,10 @@
+# SRTLA Compatibility Matrix Registry
+# Single source of truth for compat test pairs.
+# Pin refresh policy: manual refresh; weekly drift job tests upstream HEAD non-blocking.
+# Full registry populated by Task 4.
+
+excluded:
+  - name: moblink-rust
+    repo: https://github.com/datagutt/moblink-rust
+    reason: "WebSocket-based Moblink relay protocol, not SRTLA — no 0x9200-range constants found in src/; uses JSON serialization and WebSocket transport (src/protocol.rs, src/streamer.rs)"
+    studied_at: "dbf44769144f46541e7f47ed29c4b4b037f50cbd"
