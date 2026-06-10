@@ -48,6 +48,12 @@ srtla_add_test(test_pad_sendto test_pad_sendto.cpp)
 srtla_add_test(test_broadcast_ack test_broadcast_ack.cpp)
 target_link_libraries(test_broadcast_ack PRIVATE common_obj)
 
+# Extended-keepalive parsing + sender-telemetry activation/fallback semantics.
+# Pins parse_keepalive_conn_info() and the supports_extended_keepalives /
+# has_valid_sender_telemetry split (including the zero-value EC5 edge).
+srtla_add_test(test_extended_keepalive test_extended_keepalive.cpp)
+target_link_libraries(test_extended_keepalive PRIVATE common_obj)
+
 # REG1/REG2/REG3 handshake state-machine characterization.
 # Drives SRTLAHandler::process_packets over a real loopback UDP seam to
 # freeze register_group / register_connection contracts (REG2/REG3 replies,

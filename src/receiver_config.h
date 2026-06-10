@@ -103,6 +103,12 @@ struct ConnectionStats {
   // (and thus not sending keepalives).
   bool sender_supports_extended_keepalives = false;
 
+  // Tracks which quality path we last logged for this connection so the
+  // structured "quality_path=" marker is emitted exactly once per state
+  // change (not on every keepalive / evaluation cycle).
+  //   -1 = not yet logged, 0 = legacy, 1 = telemetry
+  int8_t logged_quality_path = -1;
+
   // Legacy algorithm parallel tracking (for comparison mode only)
   uint32_t legacy_error_points = 0;
   uint8_t legacy_weight_percent = WEIGHT_FULL;

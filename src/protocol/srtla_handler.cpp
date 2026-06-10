@@ -400,6 +400,15 @@ void SRTLAHandler::handle_keepalive(ConnectionGroupPtr group,
         
         // Store telemetry in connection stats (used by Connection Info algorithm)
         update_connection_telemetry(conn, info, current_time);
+
+        if (conn->stats().logged_quality_path != 1) {
+            conn->stats().logged_quality_path = 1;
+            spdlog::info(
+                "  [{}:{}] [Group: {}] quality_path=telemetry",
+                print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
+                port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
+                static_cast<void *>(group.get()));
+        }
         
         // Log the detailed keepalive packet data
         spdlog::info(
