@@ -7,6 +7,7 @@ Type-safe helpers for `srtla_send` and `srtla_rec`:
 - CLI arg builders (`buildSrtlaSendArgs`, `buildSrtlaRecArgs`)
 - Process helpers (`getSrtlaExec`, `spawnSrtlaSend/Rec`, `sendHup`, `sendTerm`, `isRunning`)
 - IP list utilities (`writeIpList`, `ipListSchema`)
+- Sender telemetry reader (`readTelemetry`, `watchTelemetry`, `telemetrySchema`) — Bun-native, ADR-001
 
 ## Sender usage
 
@@ -47,6 +48,37 @@ const { args } = buildSrtlaRecArgs({
 
 const child = spawnSrtlaRec({ args, execPath: "/usr/bin" });
 ```
+
+## Telemetry (sender stats file, ADR-001)
+
+Opt-in, read-only per-uplink telemetry. Start `srtla_send` with `statsFile`
+(`--stats-file`) so it publishes a JSON snapshot, then read it Bun-natively
+(`Bun.file`, no Node `fs`/process plumbing). Absent, unparseable, or stale
+(> 5000 ms) snapshots return `null` — stock/upstream senders simply yield `null`.
+
+```ts
+import {
+  readTelemetry,
+  watchTelemetry,
+  senderTelemetryPath,
+} from "@ceralive/srtla/telemetry";
+
+const path = senderTelemetryPath(5000); // /tmp/srtla-send-stats-5000.json
+
+const snapshot = await readTelemetry(path); // Telemetry | null
+if (snapshot) {
+  for (const c of snapshot.connections) {
+    console.log(c.conn_id, c.rtt_ms, c.weight_percent, c.bitrate_bps);
+  }
+}
+
+// Or poll on a cadence (default 1000ms); cb receives null on absent/stale.
+const handle = watchTelemetry(path, (t) => render(t), { intervalMs: 1000 });
+// handle.stop();
+```
+
+The schema, units, and 5000 ms staleness threshold mirror ADR-001 and the C++
+producer (`src/sender_telemetry.h`) exactly. `bitrate_bps` is bits/s.
 
 ## Defaults
 
