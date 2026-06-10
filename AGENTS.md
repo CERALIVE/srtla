@@ -32,6 +32,7 @@ srtla/
 │   ├── dist/              # compiled output (consumed by CeraUI backend)
 │   └── package.json       # package: @ceralive/srtla
 ├── docs/                  # protocol + ops docs (see below)
+├── tests/compat/          # cross-impl compatibility harness (see COMPAT HARNESS)
 └── CMakeLists.txt
 ```
 
@@ -56,6 +57,32 @@ cmake -B build && cmake --build build
 # TS bindings
 cd bindings/typescript && bun install && bun run build
 ```
+
+## COMPAT HARNESS
+
+`tests/compat/` runs real end-to-end interop between our binaries and pinned
+external SRTLA implementations. `matrix.yaml` is the pair registry; the harness
+is `run-matrix.sh`:
+
+```bash
+cmake -B build -DBUILD_COMPAT_TESTS=ON && cmake --build build -j   # builds helpers
+tests/compat/run-matrix.sh --pair oursxours --duration 20          # one pair
+tests/compat/run-matrix.sh --tier blocking                         # whole tier
+```
+
+- `BUILD_COMPAT_TESTS=ON` is the **only** place srtla links the system libsrt —
+  it builds `srt-sink` (mock SRT endpoint that counts bytes / writes result JSON)
+  and `ext-ka-probe` (sends a real extended keepalive so the receiver's
+  telemetry path can be verified; our `srtla_send` only emits the bare 2-byte
+  keepalive). Default build is unaffected (option is OFF).
+- "ours" = local build-dir binaries; external impls = `compat/*` Docker images
+  from `tests/compat/docker/` (host network, amd64).
+- Per-pair verdicts land in `tests/compat/results/<pair>/result.json` (gitignored).
+- Pass criteria: handshake ≤10s (end-to-end first byte; `HANDSHAKE_MAX_MS`),
+  `bytes_received ≥ 1000`, `disconnects == 0`, clean SIGTERM teardown. The harness
+  is falsifiable — `--scenario port-mismatch` must fail.
+- Both tiers (blocking and informational) gate PR CI; only the weekly upstream-drift
+  job (unpinned HEADs) is non-blocking.
 
 ## ANTI-PATTERNS
 

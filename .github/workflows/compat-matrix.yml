@@ -1,0 +1,245 @@
+name: Compatibility Matrix
+
+# Cross-implementation SRTLA interop, driven by tests/compat/matrix.yaml
+# (the single source of truth) via tests/compat/gen-ci-matrix.sh.
+#
+#   * blocking tier  -> gates merges (a failing blocking pair fails this run)
+#   * informational  -> gates merges on PRs (pins are fixed, so a failure is a
+#                        real regression rather than upstream drift)
+#   * weekly drift    -> re-runs the informational tier against upstream HEADs,
+#                        purely to surface upstream divergence; never blocks
+#
+# amd64 only — bonded UDP interop is exercised on a single ubuntu-latest host.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "CMakeLists.txt"
+      - "tests/compat/**"
+      - ".github/workflows/compat-matrix.yml"
+      - ".github/actions/compat-build/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "CMakeLists.txt"
+      - "tests/compat/**"
+      - ".github/workflows/compat-matrix.yml"
+      - ".github/actions/compat-build/**"
+  schedule:
+    # Mondays 06:00 UTC — weekly upstream-drift detection.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --------------------------------------------------------------------- #
+  # Derive the GitHub Actions matrix from matrix.yaml. Nothing downstream  #
+  # hardcodes a pair list; everything flows from this job's outputs.       #
+  # --------------------------------------------------------------------- #
+  generate-matrix:
+    name: Generate matrix from matrix.yaml
+    runs-on: ubuntu-latest
+    outputs:
+      blocking: ${{ steps.gen.outputs.blocking }}
+      informational: ${{ steps.gen.outputs.informational }}
+      has_informational: ${{ steps.gen.outputs.has_informational }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install PyYAML
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq python3-yaml
+
+      - name: Generate matrix
+        id: gen
+        run: |
+          blocking="$(tests/compat/gen-ci-matrix.sh --tier blocking)"
+          informational="$(tests/compat/gen-ci-matrix.sh --tier informational)"
+          {
+            echo "blocking=$blocking"
+            echo "informational=$informational"
+          } >> "$GITHUB_OUTPUT"
+          info_count="$(printf '%s' "$informational" | jq '.include | length')"
+          if [ "$info_count" -gt 0 ]; then
+            echo "has_informational=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_informational=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        env:
+          BLOCKING: ${{ steps.gen.outputs.blocking }}
+          INFORMATIONAL: ${{ steps.gen.outputs.informational }}
+        run: |
+          {
+            echo "## Compatibility matrix (from tests/compat/matrix.yaml)"
+            echo ""
+            echo "| tier | sender | receiver |"
+            echo "|------|--------|----------|"
+            printf '%s' "$BLOCKING" \
+              | jq -r '.include[] | "| blocking | \(.sender) | \(.receiver) |"'
+            printf '%s' "$INFORMATIONAL" \
+              | jq -r '.include[] | "| informational | \(.sender) | \(.receiver) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------- #
+  # Blocking tier — a failing pair fails the workflow.                     #
+  # --------------------------------------------------------------------- #
+  compat-blocking:
+    name: Blocking tier
+    needs: generate-matrix
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore external image cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/compat-images
+          key: compat-images-blocking-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/docker/**') }}
+
+      - name: Build helpers and external images
+        uses: ./.github/actions/compat-build
+        with:
+          tier: blocking
+
+      - name: Run blocking compatibility tier
+        run: tests/compat/run-matrix.sh --tier blocking --duration 20
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-results-blocking
+          path: tests/compat/results/**/result.json
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------- #
+  # Informational tier — gates PRs (pinned SHAs; a failure is a regression). #
+  # --------------------------------------------------------------------- #
+  compat-informational:
+    name: Informational tier
+    needs: generate-matrix
+    if: github.event_name != 'schedule' && needs.generate-matrix.outputs.has_informational == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore external image cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/compat-images
+          key: compat-images-informational-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/docker/**') }}
+
+      - name: Build helpers and external images
+        uses: ./.github/actions/compat-build
+        with:
+          tier: informational
+
+      - name: Run informational compatibility tier
+        run: tests/compat/run-matrix.sh --tier informational --duration 20
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-results-informational
+          path: tests/compat/results/**/result.json
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------- #
+  # pcap replay — runs only when an LFS fixture is present. Missing        #
+  # fixture (or replay tool not yet wired) is a graceful skip, mirroring   #
+  # the replay tool's own exit-77 SKIP semantics.                          #
+  # --------------------------------------------------------------------- #
+  pcap-replay:
+    name: pcap replay
+    needs: generate-matrix
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true
+
+      - name: Replay pcap fixtures (skip if absent)
+        run: |
+          shopt -s nullglob
+          fixtures=(tests/compat/fixtures/*.pcap tests/compat/fixtures/*.pcapng)
+
+          if [ "${#fixtures[@]}" -eq 0 ]; then
+            echo "::notice title=pcap replay::No LFS pcap fixture present; skipping (replay.sh exit-77 SKIP semantics)."
+            echo "pcap replay: SKIPPED (no fixture)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Fixture present: build srtla_rec (replay.py is stdlib-only) and replay.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git pkg-config libspdlog-dev
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)" --target srtla_rec
+
+          set +e
+          tests/compat/pcap-replay/replay.sh
+          rc=$?
+          set -e
+          if [ "$rc" -eq 77 ]; then
+            echo "::notice title=pcap replay::Replay reported SKIP (exit 77)."
+            echo "pcap replay: SKIPPED (exit 77)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          exit "$rc"
+
+  # --------------------------------------------------------------------- #
+  # Weekly upstream drift — informational tier against upstream HEADs.     #
+  # Pure detection: never blocks.                                          #
+  # --------------------------------------------------------------------- #
+  upstream-drift:
+    name: Weekly upstream drift
+    needs: generate-matrix
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build helpers and external images at upstream HEAD
+        uses: ./.github/actions/compat-build
+        with:
+          tier: informational
+          drift: "true"
+
+      - name: Run informational tier against upstream HEADs
+        run: |
+          echo "Weekly drift run: informational tier built against upstream HEAD." \
+            >> "$GITHUB_STEP_SUMMARY"
+          tests/compat/run-matrix.sh --tier informational --duration 20
+
+      - name: Upload drift results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-results-drift
+          path: tests/compat/results/**/result.json
+          if-no-files-found: ignore

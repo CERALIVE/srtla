@@ -1,0 +1,130 @@
+# SRTLA Compatibility Matrix Registry
+# Single source of truth for compat test pairs.
+# Pin refresh policy: manual refresh; weekly drift job tests upstream HEAD non-blocking.
+
+senders:
+  - name: belabox-srtla-send
+    repo: https://github.com/BELABOX/srtla
+    pin: 6f3925eb85b0ce75d3b28e65b12e88baed222f71
+    role: sender
+    build: docker/belabox-sender/Dockerfile
+    tier: blocking
+    notes: >-
+      BELABOX reference sender, pinned to the *oldest srtla2* commit
+      ("srtla2: now with receiver support for multiple connections",
+      2021-02-04) — the first BELABOX revision that speaks the REG1/REG2/REG3
+      handshake. This is deliberately the earliest interoperable srtla2 build so
+      the blocking tier proves our modern srtla_rec still accepts a 4-year-old
+      field sender (maximum backward-compat surface). Do NOT move this back to
+      pre-2021-02-04 SHAs: those are srtla1 (keepalive/ack only, no registration)
+      — a different, superseded protocol generation we intentionally do not
+      support. See docs/COMPATIBILITY.md.
+
+  - name: irlserver-srtla-send
+    repo: https://github.com/irlserver/srtla_send
+    pin: ef95926918d8a4a87579c13c19a3d38dde4ca381
+    role: sender
+    build: docker/irlserver-srtla-send/Dockerfile
+    tier: blocking
+    notes: "irlserver Rust sender; tag v3.0.0"
+
+  - name: moblin-mock
+    repo: https://github.com/eerimoq/moblin
+    pin: 0ae5294950166978064840bc874bfed3a8cf03a4
+    role: sender
+    build: tests/compat/moblin-mock/
+    tier: blocking
+    notes: "Conformance mock (C++/Python); no Swift compilation"
+
+receivers:
+  - name: belabox-srtla-rec
+    repo: https://github.com/BELABOX/srtla
+    pin: 6f3925eb85b0ce75d3b28e65b12e88baed222f71
+    role: receiver
+    build: docker/belabox-receiver/Dockerfile
+    tier: blocking
+    notes: >-
+      BELABOX reference receiver; same repo and same oldest-srtla2 pin as the
+      sender entry (2021-02-04). Tests that our modern srtla_send still registers
+      against the earliest srtla2 receiver. Pre-2021-02-04 SHAs are srtla1 and
+      out of scope — see the belabox-srtla-send note and docs/COMPATIBILITY.md.
+
+  - name: openirl-receiver
+    repo: https://github.com/OpenIRL/srtla-receiver
+    pin: d8fd677812b5706008dd329ba6239429ec5bc51c
+    role: receiver
+    build: docker/openirl-receiver/Dockerfile
+    tier: blocking
+    notes: >-
+      OpenIRL receiver. The compat image builds only the srtla_rec component
+      (the SRTLA->SRT forwarder) from https://github.com/OpenIRL/srtla pinned at
+      e9ba6a36ffaf179e92e06c7e3967637959fff363 (OPENIRL_SRTLA_REF build ARG).
+      The full OpenIRL management stack (srt-live-server + streamid/apikey auth)
+      is intentionally omitted: it cannot forward to a plain SRT sink and so
+      does not fit the SRTLA_PORT/SRT_TARGET_HOST/SRT_TARGET_PORT env contract
+      the harness uses; protocol compat only exercises the SRTLA path. CLI:
+      srtla_rec --srtla_port P --srt_hostname H --srt_port P2. No source patch.
+
+  - name: go-srtla
+    repo: https://github.com/e04/go-srtla
+    pin: 8a3b55ba562891ddc6d272cb015e136035bbffc8
+    role: receiver
+    build: docker/go-srtla/Dockerfile
+    tier: informational
+    notes: "Go implementation"
+
+  - name: go-irl
+    repo: https://github.com/e04/go-irl
+    pin: fa9c1185182a1f59502e62e9fd6eb0fd8ad8c2d4
+    role: receiver
+    build: docker/go-irl/Dockerfile
+    tier: informational
+    notes: >-
+      go-irl is a full IRL app (SRTLA receiver + SRT proxy + browser source +
+      WebSocket UI). Headless receiver-only invocation:
+      ./go-irl -mode=server -srtla-port=5000 -srt-host=127.0.0.1 -srt-port=5001
+      -mode=server runs ONLY the SRTLA receiver (runSrtla), no proxy/UI.
+      Flags use HYPHENS (go-srtla, a different binary, uses underscores).
+      Build-fix (no source patch): go-irl //go:embed's frontend/dist/index.html,
+      a vite artifact absent from the repo, so the Docker build stages a
+      placeholder to let `go build` succeed; server mode never serves it.
+
+pairs:
+  - sender: belabox-srtla-send
+    receiver: ours
+    tier: blocking
+
+  - sender: irlserver-srtla-send
+    receiver: ours
+    tier: blocking
+
+  - sender: moblin-mock
+    receiver: ours
+    tier: blocking
+
+  - sender: ours
+    receiver: belabox-srtla-rec
+    tier: blocking
+
+  - sender: ours
+    receiver: openirl-receiver
+    tier: blocking
+
+  - sender: ours
+    receiver: ours
+    tier: blocking
+    notes: "Extended-KA activation verification"
+
+  - sender: ours
+    receiver: go-srtla
+    tier: informational
+
+  - sender: ours
+    receiver: go-irl
+    tier: informational
+
+excluded:
+  - name: moblink-rust
+    repo: https://github.com/datagutt/moblink-rust
+    reason: "WebSocket-based Moblink relay protocol, not SRTLA — no 0x9200-range constants found in src/; uses JSON serialization and WebSocket transport (src/protocol.rs, src/streamer.rs)"
+    studied_at: "dbf44769144f46541e7f47ed29c4b4b037f50cbd"

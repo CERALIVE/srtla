@@ -52,3 +52,7 @@ package-lock.json text eol=lf
 *.gz   binary
 *.tar  binary
 *.bin  binary
+
+# Compat replay fixtures — large packet captures live in git-LFS, not as raw
+# blobs (see tests/compat/CAPTURE.md and tests/compat/pcap-replay/).
+tests/compat/fixtures/*.pcap filter=lfs diff=lfs merge=lfs -text

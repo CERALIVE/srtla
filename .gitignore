@@ -23,3 +23,6 @@ bindings/typescript/*.tsbuildinfo
 .omo/
 build-debug/
 build-native/
+
+# Compat harness run artifacts (per-pair result.json + logs)
+tests/compat/results/

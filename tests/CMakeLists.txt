@@ -47,3 +47,17 @@ srtla_add_test(test_pad_sendto test_pad_sendto.cpp)
 # branch; HANDSHAKE must NOT match (after upstream commit 2de6dbb).
 srtla_add_test(test_broadcast_ack test_broadcast_ack.cpp)
 target_link_libraries(test_broadcast_ack PRIVATE common_obj)
+
+# REG1/REG2/REG3 handshake state-machine characterization.
+# Drives SRTLAHandler::process_packets over a real loopback UDP seam to
+# freeze register_group / register_connection contracts (REG2/REG3 replies,
+# REG_ERR / REG_NGP error paths, idempotency, multi-link bonding).
+# Defined inline (not via srtla_add_test) so a "registration." TEST_PREFIX
+# can be attached, keeping `ctest -R registration` selective for this suite.
+add_executable(test_registration_handshake test_registration_handshake.cpp)
+target_link_libraries(test_registration_handshake
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_registration_handshake PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_registration_handshake PRIVATE cxx_std_17)
+target_compile_options(test_registration_handshake PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_registration_handshake TEST_PREFIX "registration.")
