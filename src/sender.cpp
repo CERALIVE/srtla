@@ -164,6 +164,7 @@ void reg_pkt(conn_t *c, int32_t packet) {
 }
 
 int conn_timed_out(conn_t *c, time_t ts) {
+  if (c->last_rcvd == 0) return 0;  /* never received = not yet established, not timed out */
   return (c->last_rcvd + CONN_TIMEOUT) < ts;
 }
 
@@ -179,7 +180,8 @@ conn_t *select_conn() {
   }
 
   time_t t;
-  assert(get_seconds(&t) == 0);
+  if (get_seconds(&t) != 0)
+    return NULL;
 
   for (conn_t *c = conns; c != NULL; c = c->next) {
     /* If we have some very slow links, we may be better off ignoring them
@@ -600,7 +602,8 @@ void connection_housekeeping() {
      on when the first execution happens within the seconds interval */
   static uint64_t last_ran = 0;
   uint64_t ms;
-  assert(get_ms(&ms) == 0);
+  if (get_ms(&ms) != 0)
+    return;
   if ((last_ran + HOUSEKEEPING_INT) > ms)
     return;
 
@@ -642,14 +645,25 @@ void connection_housekeeping() {
         send_reg1(c);
       }
       continue;
-    }
+    } else if (c->last_rcvd == 0) {
+      /* Never received anything yet — this connection has not registered.
+         Bootstrap it by driving the same REG2/REG1 exchange the reconnect
+         path uses, but without the timed-out side effects (no window/in_flight
+         reset, no reconnect message). */
+      if (pending_reg2_conn == NULL) {
+        send_reg2(c);
+      } else if (pending_reg2_conn == c) {
+        send_reg1(c);
+      }
+      continue;
+    } else {
+      /* If a connection has received data in the last CONN_TIMEOUT seconds,
+         then it's active */
+      active_connections++;
 
-    /* If a connection has received data in the last CONN_TIMEOUT seconds,
-       then it's active */
-    active_connections++;
-
-    if ((c->last_sent + IDLE_TIME) < time) {
-      send_keepalive(c);
+      if ((c->last_sent + IDLE_TIME) < time) {
+        send_keepalive(c);
+      }
     }
   }
 
