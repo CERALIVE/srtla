@@ -120,3 +120,15 @@ driving test (no fix without a test).
 > against ffmpeg's fixed ~5 s peer-idle timeout), orthogonal to bonding
 > correctness. `sighup-reload.sh` kills no link, so it **does** assert
 > `disconnects == 0`.
+
+## Sender telemetry (Task 18)
+
+Telemetry emission via `--stats-file` is now under test. **No RED `*_KNOWNBUG`** — all items are green regression pins or fixes shipped with driving tests.
+
+- **Stats file emission (156826d).** `srtla_send` writes a per-uplink JSON snapshot to the path given by `--stats-file` every 1000 ms via atomic `rename(2)`. `test_telemetry_emit.cpp` pins: file appears within the write interval; JSON parses against the ADR-001 schema; `"connections": []` is written when no links are active; a concurrent reader in a tight loop never observes a torn document; the file is removed on clean shutdown. The 63-test ctest suite stays green with telemetry enabled.
+
+- **Opt-in only.** When `--stats-file` is not passed, no file or temp sibling is ever opened. The flag is absent from the CeraUI spawn path until Task 19 wires it up; the sender is safe to run without it.
+
+- **Schema contract fixed by ADR-001.** The JSON field names, types, units, and staleness threshold (`SENDER_TELEMETRY_STALE_MS = 5000`) are defined in `docs/adr/ADR-001-telemetry-ipc.md` and implemented in `src/sender_telemetry.h`. Drift between the C producer and the TS consumer (Tasks 19/21/22) is a release blocker — the canonical example in the ADR must parse via the additive Zod schema.
+
+**Open hardening lever (not a bug).** The `weight_percent` field is always reported as `SENDER_DEFAULT_WEIGHT_PERCENT` (100) because `srtla_send` does not run the receiver's load-balancer scoring. Reporting a real per-link weight would require porting the scoring algorithm into the sender, which is out of scope for Task 18. The field is present and correct per the ADR contract; a future task can populate it from actual sender-side scoring if needed. No `*_KNOWNBUG` test exists for this — it is a known limitation, not a defect.

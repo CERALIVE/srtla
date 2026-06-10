@@ -9,8 +9,10 @@ For quick-start usage, command reference, and build instructions, see the [READM
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Protocol](#protocol)
+- [Extended Keepalive](#extended-keepalive)
 - [Congestion Control](#congestion-control)
 - [Connection Recovery](#connection-recovery)
+- [Observability](#observability)
 - [Timeouts & Limits](#timeouts--limits)
 
 ---
@@ -154,6 +156,16 @@ Sender                     NAT                      Receiver
 
 ---
 
+## Extended Keepalive
+
+CeraLive senders emit an extended keepalive (38-byte `0x9000` packet, magic `0xC01F` at bytes 10-11, version `0x0001`) that carries `connection_info_t` — per-link RTT, NAK count, congestion window, in-flight packets, and bitrate. The receiver detects this capability via `sender_supports_extended_keepalives` in `src/receiver_config.h` and uses the data to populate `has_valid_sender_telemetry`.
+
+Stock senders (BELABOX, Moblin, upstream binaries) emit only the bare 2-byte keepalive. The receiver falls back gracefully: it still tracks per-connection quality from its own observations, just without the sender-side view. The `ext-ka-probe` helper in `tests/compat/` sends a real extended keepalive so the receiver's telemetry path can be exercised in the compat harness without requiring our `srtla_send`.
+
+For the full ecosystem picture — which implementations support extended keepalive, which don't, and what that means for interop — see [COMPATIBILITY.md](COMPATIBILITY.md).
+
+---
+
 ## Congestion Control
 
 SRTLA uses a window-based algorithm on the sender to distribute packets across links.
@@ -210,6 +222,24 @@ Quality is assessed by bandwidth performance, packet loss, and dynamic bandwidth
 ### Recovery Mode
 
 Connections showing signs of recovery enter a recovery mode and receive more frequent keepalive packets for `RECOVERY_CHANCE_PERIOD`. After successful recovery they are fully reactivated; if recovery fails within that window, the connection is abandoned.
+
+---
+
+## Observability
+
+`srtla_rec` emits structured lifecycle events to its log at key points in a group's lifetime. These are machine-parseable lines intended for operator tracing and automated monitoring.
+
+| Event | When emitted |
+|-------|-------------|
+| `group_registered` | A new group is created after a successful REG1/REG2/REG3 handshake |
+| `conn_added` | A connection joins an existing group (additional link registered) |
+| `conn_removed reason=…` | A connection is removed from a group (timeout, explicit teardown, or error) |
+| `group_reaped reason=…` | A group is destroyed after `GROUP_TIMEOUT` idle or all connections gone |
+| `quality_path=…` | Per-connection quality level transition (e.g. `WEIGHT_FULL` → `WEIGHT_DEGRADED`) |
+
+See `docs/TROUBLESHOOTING.md` → *Structured Lifecycle Events* for log format details and example output.
+
+`srtla_send` can publish per-uplink telemetry to a JSON stats file via `--stats-file <path>`. The file is rewritten atomically every 1000 ms. See [ADR-001](adr/ADR-001-telemetry-ipc.md) for the full schema and transport rationale.
 
 ---
 
