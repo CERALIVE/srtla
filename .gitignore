@@ -26,3 +26,7 @@ build-native/
 
 # Compat harness run artifacts (per-pair result.json + logs)
 tests/compat/results/
+
+# Python bytecode (compat harness pcap-replay scripts)
+__pycache__/
+*.pyc
