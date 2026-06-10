@@ -48,6 +48,22 @@ srtla_add_test(test_pad_sendto test_pad_sendto.cpp)
 srtla_add_test(test_broadcast_ack test_broadcast_ack.cpp)
 target_link_libraries(test_broadcast_ack PRIVATE common_obj)
 
+# --- Hardening reproducers (Task 14): races, exhaustion, timeouts ----------
+# These drive the real receiver registration path over a loopback UDP socket
+# (handler_harness.h) and the cleanup reaper through its injected-clock seam.
+
+# Family 1 + 5: REG3/NGP race and concurrent multi-interface registration.
+srtla_add_test(test_reg_race test_reg_race.cpp)
+target_link_libraries(test_reg_race PRIVATE receiver_core_obj common_obj)
+
+# Family 2: MAX_GROUPS exhaustion (clean REG_ERR, retry-after-dereg, RSS).
+srtla_add_test(test_group_limits test_group_limits.cpp)
+target_link_libraries(test_group_limits PRIVATE receiver_core_obj common_obj)
+
+# Family 3: timeout / cleanup via ConnectionRegistry::cleanup_inactive(ts, cb).
+srtla_add_test(test_timeout_cleanup test_timeout_cleanup.cpp)
+target_link_libraries(test_timeout_cleanup PRIVATE receiver_core_obj common_obj)
+
 # Extended-keepalive parsing + sender-telemetry activation/fallback semantics.
 # Pins parse_keepalive_conn_info() and the supports_extended_keepalives /
 # has_valid_sender_telemetry split (including the zero-value EC5 edge).
