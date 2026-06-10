@@ -1,7 +1,98 @@
 # SRTLA Compatibility Matrix Registry
 # Single source of truth for compat test pairs.
 # Pin refresh policy: manual refresh; weekly drift job tests upstream HEAD non-blocking.
-# Full registry populated by Task 4.
+
+senders:
+  - name: belabox-srtla-send
+    repo: https://github.com/BELABOX/srtla
+    pin: 2207c3d33de45fb6e359bdd81d01fd910fe5ba1c
+    role: sender
+    build: docker/belabox-sender/Dockerfile
+    tier: blocking
+    notes: "BELABOX reference sender; tag v1"
+
+  - name: irlserver-srtla-send
+    repo: https://github.com/irlserver/srtla_send
+    pin: ef95926918d8a4a87579c13c19a3d38dde4ca381
+    role: sender
+    build: docker/irlserver-srtla-send/Dockerfile
+    tier: blocking
+    notes: "irlserver Rust sender; tag v3.0.0"
+
+  - name: moblin-mock
+    repo: https://github.com/eerimoq/moblin
+    pin: 0ae5294950166978064840bc874bfed3a8cf03a4
+    role: sender
+    build: tests/compat/moblin-mock/
+    tier: blocking
+    notes: "Conformance mock (C++/Python); no Swift compilation"
+
+receivers:
+  - name: belabox-srtla-rec
+    repo: https://github.com/BELABOX/srtla
+    pin: 2207c3d33de45fb6e359bdd81d01fd910fe5ba1c
+    role: receiver
+    build: docker/belabox-receiver/Dockerfile
+    tier: blocking
+    notes: "BELABOX reference receiver; same repo as sender"
+
+  - name: openirl-receiver
+    repo: https://github.com/OpenIRL/srtla-receiver
+    pin: d8fd677812b5706008dd329ba6239429ec5bc51c
+    role: receiver
+    build: docker/openirl-receiver/Dockerfile
+    tier: blocking
+    notes: "OpenIRL receiver"
+
+  - name: go-srtla
+    repo: https://github.com/e04/go-srtla
+    pin: 8a3b55ba562891ddc6d272cb015e136035bbffc8
+    role: receiver
+    build: docker/go-srtla/Dockerfile
+    tier: informational
+    notes: "Go implementation"
+
+  - name: go-irl
+    repo: https://github.com/e04/go-irl
+    pin: fa9c1185182a1f59502e62e9fd6eb0fd8ad8c2d4
+    role: receiver
+    build: docker/go-irl/Dockerfile
+    tier: informational
+    notes: "go-irl; headless receiver-only invocation: ./go-irl -srtla_port 5000 -srt_hostname 127.0.0.1 -srt_port 5001"
+
+pairs:
+  - sender: belabox-srtla-send
+    receiver: ours
+    tier: blocking
+
+  - sender: irlserver-srtla-send
+    receiver: ours
+    tier: blocking
+
+  - sender: moblin-mock
+    receiver: ours
+    tier: blocking
+
+  - sender: ours
+    receiver: belabox-srtla-rec
+    tier: blocking
+
+  - sender: ours
+    receiver: openirl-receiver
+    tier: blocking
+
+  - sender: ours
+    receiver: ours
+    tier: blocking
+    notes: "Extended-KA activation verification"
+
+  - sender: ours
+    receiver: go-srtla
+    tier: informational
+
+  - sender: ours
+    receiver: go-irl
+    tier: informational
 
 excluded:
   - name: moblink-rust
