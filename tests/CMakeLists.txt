@@ -25,6 +25,12 @@ endfunction()
 srtla_add_test(test_common test_common.cpp)
 target_link_libraries(test_common PRIVATE common_obj)
 
+# Sender decision-logic test: conn_is_timed_out / housekeeping_action
+# (906ac05 bootstrap regression guard) and the update_conns SIGHUP reload guard
+# (count_parseable_source_ips / reload_should_apply). Links common_obj for parse_ip.
+srtla_add_test(test_sender_bootstrap test_sender_bootstrap.cpp)
+target_link_libraries(test_sender_bootstrap PRIVATE common_obj)
+
 # NAK deduplication characterization (pure logic).
 srtla_add_test(test_nak_dedup test_nak_dedup.cpp)
 target_link_libraries(test_nak_dedup PRIVATE receiver_core_obj common_obj)

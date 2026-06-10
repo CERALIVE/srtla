@@ -81,3 +81,42 @@ to `srtla_rec` (`group_registered`, `conn_added`, `conn_removed reason=…`,
 `group_reaped reason=…`, alongside the existing `quality_path=…`) for
 operator-visible register→stream→timeout→reap tracing. See
 `docs/TROUBLESHOOTING.md` → *Structured Lifecycle Events*.
+
+## Sender link management (Task 17)
+
+Sender-side bootstrap, recovery, and SIGHUP reload are now under test. **No RED
+`*_KNOWNBUG`** — every item is a green regression pin or a fix shipped with a
+driving test (no fix without a test).
+
+- **Bootstrap registration (906ac05 regression pin).** `conn_is_timed_out()` and
+  `housekeeping_action()` were extracted into `src/sender_logic.h` so the
+  fresh-link bootstrap decision is testable without sockets/globals.
+  `test_sender_bootstrap.cpp` pins it: a never-received link (`last_rcvd == 0`)
+  is **not** timed out and takes the `BootstrapRegister` path on the first
+  housekeeping tick. Reverting either half of 906ac05 turns these two tests red
+  (verified by temporarily reverting the guard).
+
+- **SIGHUP reload guard (fix + driving test).** `update_conns()` previously tore
+  down every connection when a SIGHUP reload resolved to zero valid source IPs
+  (empty/garbage file), and `setup_conns()` would `exit()` on an unreadable file
+  — so a bad reload killed the stream or crashed the sender. It now counts
+  parseable IPs first (`count_parseable_source_ips`/`reload_should_apply`) and
+  refuses a zero-valid-IP reload, logging a parse error and keeping the existing
+  links. Driven by `test_sender_bootstrap.cpp` (unit) and the
+  `sighup-reload.sh` invalid-reload phase (end-to-end).
+
+### New harness scenarios (`tests/compat/scenarios/`)
+
+| Scenario | Proves |
+|----------|--------|
+| `link-drop.sh` | Two bonded loopback links; isolating one with iptables makes the sender shift off it within `CONN_TIMEOUT` (survivor stays up) and re-register it on restore. SKIPs cleanly without iptables/sudo. |
+| `sighup-reload.sh` | Appending a source IP + SIGHUP joins the new link to the existing group with 0 disconnects (no re-handshake); a garbage file + SIGHUP is refused without crashing or dropping links. |
+
+> The `link-drop.sh` verdict gates on the **sender's** deterministic behavior
+> (shift + survivor-up + recovery + media delivered). End-to-end SRT
+> `disconnects` is recorded but **not** a pass gate: riding a hard mid-stream
+> dual-direction link kill without an SRT break is an SRT app-layer property
+> (the caller's send window stalls on the in-flight packets lost with the link,
+> against ffmpeg's fixed ~5 s peer-idle timeout), orthogonal to bonding
+> correctness. `sighup-reload.sh` kills no link, so it **does** assert
+> `disconnects == 0`.

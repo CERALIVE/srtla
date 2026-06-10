@@ -33,14 +33,15 @@
 
 #include "sd_notify.h"
 #include "sender.h"
+#include "sender_logic.h"
 #include <argparse/argparse.hpp>
 
+using srtla::sender::HousekeepingAction;
+
 #define PKT_LOG_SZ 256
-#define CONN_TIMEOUT 4
 #define REG2_TIMEOUT 4
 #define REG3_TIMEOUT 4
 #define GLOBAL_TIMEOUT 10
-#define IDLE_TIME 1
 
 #define min(a, b) ((a < b) ? a : b)
 #define max(a, b) ((a > b) ? a : b)
@@ -164,8 +165,10 @@ void reg_pkt(conn_t *c, int32_t packet) {
 }
 
 int conn_timed_out(conn_t *c, time_t ts) {
-  if (c->last_rcvd == 0) return 0;  /* never received = not yet established, not timed out */
-  return (c->last_rcvd + CONN_TIMEOUT) < ts;
+  /* Decision logic lives in sender_logic.h so it can be unit-tested without
+     sockets/globals (regression guard for 906ac05: a never-received link,
+     last_rcvd==0, is not-yet-established, not timed out). */
+  return srtla::sender::conn_is_timed_out(c->last_rcvd, ts) ? 1 : 0;
 }
 
 conn_t *select_conn() {
@@ -496,6 +499,18 @@ int setup_conns(char *source_ip_file) {
 }
 
 void update_conns(char *source_ip_file) {
+  /* Refuse a SIGHUP reload that would yield zero valid source IPs (empty,
+     garbage, or unreadable file). Without this guard every existing link would
+     be marked removed and torn down, killing the stream — and setup_conns()
+     would exit() on an unreadable file. Keep streaming on the current links. */
+  if (!srtla::sender::reload_should_apply(
+          srtla::sender::count_parseable_source_ips(source_ip_file))) {
+    spdlog::error("Ignoring source IP reload from {}: no valid source IPs "
+                  "(parse error); keeping existing connections",
+                  source_ip_file);
+    return;
+  }
+
   for (conn_t *c = conns; c != NULL; c = c->next) {
     c->removed = 1;
   }
@@ -621,49 +636,43 @@ void connection_housekeeping() {
       continue;
     }
 
-    if (conn_timed_out(c, time)) {
+    switch (srtla::sender::housekeeping_action(c->last_rcvd, time)) {
+    case HousekeepingAction::TimedOutReconnect:
       /* When we first detect the connection having failed,
          we reset its status and print a message */
-      if (c->last_rcvd > 0) {
-        spdlog::info("{} ({}): connection failed, attempting to reconnect",
-                     print_addr(&c->src), fmt::ptr(c));
-        c->last_rcvd = 0;
-        c->last_sent = 0;
-        c->window = WINDOW_MIN * WINDOW_MULT;
-        c->in_flight_pkts = 0;
-        for (int i = 0; i < PKT_LOG_SZ; i++) {
-          c->pkt_log[i] = -1;
-        }
+      spdlog::info("{} ({}): connection failed, attempting to reconnect",
+                   print_addr(&c->src), fmt::ptr(c));
+      c->last_rcvd = 0;
+      c->last_sent = 0;
+      c->window = WINDOW_MIN * WINDOW_MULT;
+      c->in_flight_pkts = 0;
+      for (int i = 0; i < PKT_LOG_SZ; i++) {
+        c->pkt_log[i] = -1;
       }
+      /* fall through: drive the same REG2/REG1 exchange as a fresh bootstrap.
+         As the connection has timed out on our end, the receiver might have
+         garbage collected it — try to re-establish rather than keepalive. */
+      [[fallthrough]];
 
-      if (pending_reg2_conn == NULL) {
-        /* As the connection has timed out on our end, the receiver might have
-           garbage collected it. Try to re-establish it rather than send a
-           keepalive */
-        send_reg2(c);
-      } else if (pending_reg2_conn == c) {
-        send_reg1(c);
-      }
-      continue;
-    } else if (c->last_rcvd == 0) {
-      /* Never received anything yet — this connection has not registered.
-         Bootstrap it by driving the same REG2/REG1 exchange the reconnect
-         path uses, but without the timed-out side effects (no window/in_flight
-         reset, no reconnect message). */
+    case HousekeepingAction::BootstrapRegister:
+      /* Never received anything yet (or just reset above): this connection is
+         not registered. Drive the first REG2/REG1 exchange. */
       if (pending_reg2_conn == NULL) {
         send_reg2(c);
       } else if (pending_reg2_conn == c) {
         send_reg1(c);
       }
       continue;
-    } else {
+
+    case HousekeepingAction::ActiveKeepalive:
       /* If a connection has received data in the last CONN_TIMEOUT seconds,
          then it's active */
       active_connections++;
 
-      if ((c->last_sent + IDLE_TIME) < time) {
+      if (srtla::sender::keepalive_due(c->last_sent, time)) {
         send_keepalive(c);
       }
+      break;
     }
   }
 

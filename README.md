@@ -118,7 +118,12 @@ srtla_send <listen_port> <srtla_host> <srtla_port> <ips_file> [--verbose]
 | `--verbose` | Enable debug logging | off |
 
 **Signals:**
-- `SIGHUP`: Reload IP list without restart
+- `SIGHUP`: Reload IP list without restart. Connections already present in the
+  new list are kept (no re-handshake, no disconnect); new IPs join the running
+  group and dropped IPs are torn down. A reload that resolves to **zero** valid
+  source IPs (empty, all-garbage, or unreadable file) is refused — the sender
+  logs a parse error and keeps streaming on the existing links rather than
+  dropping the stream.
 
 ### srtla_rec
 
