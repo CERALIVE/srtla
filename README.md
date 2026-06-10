@@ -30,6 +30,8 @@ This is a fork of the [BELABOX SRTLA project](https://github.com/BELABOX/srtla),
 - Broadcast ACK/NAK delivery across all connections in a group
 - Batch packet I/O (`recvmmsg`/`sendmmsg`) for low syscall overhead
 - Connection-recovery mode for temporary network issues
+- Per-uplink telemetry via atomic JSON stats file (`--stats-file`)
+- Cross-implementation compatibility matrix with automated harness
 - Comprehensive docs (network setup, troubleshooting, protocol)
 - TypeScript bindings for `srtla_send` / `srtla_rec`
 
@@ -94,8 +96,10 @@ sudo make install
 | Document | Description |
 |----------|-------------|
 | [Network Setup](docs/NETWORK_SETUP.md) | **Start here!** Routing config, IP list management |
-| [How It Works](docs/HOW_IT_WORKS.md) | Protocol details, architecture, congestion control |
+| [How It Works](docs/HOW_IT_WORKS.md) | Protocol details, architecture, congestion control, observability |
+| [Compatibility](docs/COMPATIBILITY.md) | Ecosystem research: which impls interop and why |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
+| [Extension Points](docs/EXTENSION_POINTS.md) | GroupIdentity hooks and extension surface |
 | [Connection Info Comparison](docs/connection-info-comparison.md) | Connection metrics and comparison |
 | [Keepalive Improvements](docs/keepalive-improvements.md) | Extended keepalive fix documentation |
 
@@ -116,9 +120,15 @@ srtla_send <listen_port> <srtla_host> <srtla_port> <ips_file> [--verbose]
 | `srtla_port` | Remote SRTLA receiver port | 5001 |
 | `ips_file` | File with source IPs (one per line) | /tmp/srtla_ips |
 | `--verbose` | Enable debug logging | off |
+| `--stats-file <path>` | Write per-uplink telemetry JSON to `<path>` (opt-in; see [Telemetry](#telemetry)) | off |
 
 **Signals:**
-- `SIGHUP`: Reload IP list without restart
+- `SIGHUP`: Reload IP list without restart. Connections already present in the
+  new list are kept (no re-handshake, no disconnect); new IPs join the running
+  group and dropped IPs are torn down. A reload that resolves to **zero** valid
+  source IPs (empty, all-garbage, or unreadable file) is refused — the sender
+  logs a parse error and keeps streaming on the existing links rather than
+  dropping the stream.
 
 ### srtla_rec
 
@@ -231,6 +241,35 @@ Receiver tunables (all live in `src/receiver_config.h`):
 | `MIN_ACCEPTABLE_TOTAL_BANDWIDTH_KBPS` | 1000 | Minimum total bandwidth for acceptable streaming |
 | `GOOD_CONNECTION_THRESHOLD` | 50% | Threshold for a "good" connection |
 | `CONNECTION_GRACE_PERIOD` | 10 s | Grace period before applying penalties |
+
+## Compatibility Matrix
+
+The `tests/compat/matrix.yaml` registry tracks tested sender/receiver pairs and their expected verdicts. The `blocking` tier must pass before any release.
+
+```bash
+# Build the compat helpers first (links system libsrt; default build unaffected)
+cmake -B build -DBUILD_COMPAT_TESTS=ON && cmake --build build -j
+
+# Run the full blocking tier
+tests/compat/run-matrix.sh --tier blocking
+
+# Run a single pair
+tests/compat/run-matrix.sh --pair oursxours --duration 20
+```
+
+Per-pair verdicts land in `tests/compat/results/<pair>/result.json` (gitignored). See [Compatibility](docs/COMPATIBILITY.md) for the ecosystem research behind each entry.
+
+## Telemetry
+
+`srtla_send` can publish per-uplink JSON snapshots to a file. Pass `--stats-file <path>` to enable it:
+
+```bash
+srtla_send 5000 relay.example.com 5001 /tmp/srtla_ips --stats-file /tmp/srtla-send-stats-5000.json
+```
+
+The file is rewritten atomically every 1000 ms via `rename(2)` — readers never see a torn document. When there are no active links the file still exists with `"connections": []`, so "running but idle" is distinct from "absent". The file is removed on clean shutdown.
+
+The CeraUI backend reads this file via the `readSenderTelemetry` export in `@ceralive/srtla`. Full schema and staleness semantics are in [ADR-001](docs/adr/ADR-001-telemetry-ipc.md).
 
 ## Socket Information
 

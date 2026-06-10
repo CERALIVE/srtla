@@ -5,6 +5,7 @@ export declare const srtlaSendOptionsSchema: z.ZodObject<{
     srtlaPort: z.ZodDefault<z.ZodNumber>;
     ipsFile: z.ZodDefault<z.ZodString>;
     verbose: z.ZodOptional<z.ZodBoolean>;
+    statsFile: z.ZodOptional<z.ZodString>;
     execPath: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type SrtlaSendOptionsInput = z.input<typeof srtlaSendOptionsSchema>;

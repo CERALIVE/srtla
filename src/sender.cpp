@@ -33,14 +33,19 @@
 
 #include "sd_notify.h"
 #include "sender.h"
+#include "sender_logic.h"
+#include "sender_telemetry.h"
 #include <argparse/argparse.hpp>
 
+#include <string>
+#include <vector>
+
+using srtla::sender::HousekeepingAction;
+
 #define PKT_LOG_SZ 256
-#define CONN_TIMEOUT 4
 #define REG2_TIMEOUT 4
 #define REG3_TIMEOUT 4
 #define GLOBAL_TIMEOUT 10
-#define IDLE_TIME 1
 
 #define min(a, b) ((a < b) ? a : b)
 #define max(a, b) ((a > b) ? a : b)
@@ -66,9 +71,31 @@ typedef struct conn {
   int window;
   int pkt_idx;
   int pkt_log[PKT_LOG_SZ];
+  // Telemetry (ADR-001). Read/updated only on the --stats-file path; with the
+  // flag absent these stay calloc-zeroed and untouched, so there is zero
+  // behavioral footprint when telemetry is off.
+  uint32_t tlm_id;         // stable per-link id, stringified as conn_id
+  uint32_t tlm_nak_count;  // cumulative NAKs charged to this link
+  uint64_t tlm_bytes_sent; // cumulative payload bytes forwarded on this link
+  uint64_t tlm_last_bytes; // tlm_bytes_sent sampled at last emit (bitrate delta)
+  uint64_t tlm_last_ms;    // wall-clock ms at last emit
 } conn_t;
 
 char *source_ip_file = NULL;
+
+/*
+
+Telemetry (ADR-001): opt-in via --stats-file <path>. Everything below is gated
+on stats_file_enabled; when off, no stats file or temp sibling is ever opened,
+renamed, or unlinked. The *_c buffers hold async-signal-safe copies of the live
+and temp paths so the SIGTERM/SIGINT handler can unlink them on clean shutdown.
+
+*/
+bool stats_file_enabled = false;
+std::string stats_file_path;
+uint32_t next_tlm_id = 0;
+static char stats_path_c[4096];
+static char stats_path_tmp_c[4096 + 8];
 
 int do_update_conns = 0;
 
@@ -164,8 +191,10 @@ void reg_pkt(conn_t *c, int32_t packet) {
 }
 
 int conn_timed_out(conn_t *c, time_t ts) {
-  if (c->last_rcvd == 0) return 0;  /* never received = not yet established, not timed out */
-  return (c->last_rcvd + CONN_TIMEOUT) < ts;
+  /* Decision logic lives in sender_logic.h so it can be unit-tested without
+     sockets/globals (regression guard for 906ac05: a never-received link,
+     last_rcvd==0, is not-yet-established, not timed out). */
+  return srtla::sender::conn_is_timed_out(c->last_rcvd, ts) ? 1 : 0;
 }
 
 conn_t *select_conn() {
@@ -224,6 +253,9 @@ void handle_srt_data(int fd) {
     int32_t sn = get_srt_sn(buf, n);
     int ret = sendto(c->fd, &buf, n, 0, &srtla_addr, addr_len);
     if (ret == n) {
+      if (stats_file_enabled) {
+        c->tlm_bytes_sent += (uint64_t)n; // per-link throughput accounting
+      }
       if (sn >= 0) {
         reg_pkt(c, sn);
       }
@@ -258,6 +290,7 @@ void register_nak(int32_t packet) {
     for (int i = idx; i != c->pkt_idx; i = get_pkt_idx(i, -1)) {
       if (c->pkt_log[i] == packet) {
         c->pkt_log[i] = -1;
+        c->tlm_nak_count++; // attribute this NAK to the link that sent the pkt
         // It might be better to use exponential decay like this
         // c->window = c->window * 998 / 1000;
         c->window -= WINDOW_DECR;
@@ -474,6 +507,7 @@ int setup_conns(char *source_ip_file) {
         c->src = src;
         c->fd = -1;
         c->window = WINDOW_DEF * WINDOW_MULT;
+        c->tlm_id = next_tlm_id++; // stable for the life of this link
 
         c->next = conns;
         conns = c;
@@ -496,6 +530,18 @@ int setup_conns(char *source_ip_file) {
 }
 
 void update_conns(char *source_ip_file) {
+  /* Refuse a SIGHUP reload that would yield zero valid source IPs (empty,
+     garbage, or unreadable file). Without this guard every existing link would
+     be marked removed and torn down, killing the stream — and setup_conns()
+     would exit() on an unreadable file. Keep streaming on the current links. */
+  if (!srtla::sender::reload_should_apply(
+          srtla::sender::count_parseable_source_ips(source_ip_file))) {
+    spdlog::error("Ignoring source IP reload from {}: no valid source IPs "
+                  "(parse error); keeping existing connections",
+                  source_ip_file);
+    return;
+  }
+
   for (conn_t *c = conns; c != NULL; c = c->next) {
     c->removed = 1;
   }
@@ -525,6 +571,16 @@ void update_conns(char *source_ip_file) {
 }
 
 void schedule_update_conns(int signal) { do_update_conns = 1; }
+
+/* Clean-shutdown handler installed only when --stats-file is active: remove the
+   live stats file (and any stale temp sibling) so a stopped sender is "absent",
+   not "stale". unlink() is async-signal-safe and the path buffers are filled
+   once at startup and never mutated, so touching them from here is safe. */
+void remove_stats_and_exit(int signal) {
+  unlink(stats_path_c);
+  unlink(stats_path_tmp_c);
+  _exit(0);
+}
 
 int open_socket(conn_t *c, int quiet) {
   if (c->fd >= 0) {
@@ -594,6 +650,54 @@ void send_keepalive(conn_t *c) {
   sendto(c->fd, &pkt, sizeof(pkt), 0, &srtla_addr, addr_len);
 }
 
+/* Gather a telemetry snapshot for every *active* link and publish it atomically
+   (ADR-001 Option A). Driven once per housekeeping tick (~1000 ms cadence). Zero
+   active links still publishes "connections": [] with a fresh timestamp, so
+   "running but idle" stays distinct from "absent". No-op unless --stats-file
+   is set — when off, nothing here touches the filesystem. */
+void emit_telemetry(time_t now_s, uint64_t now_ms) {
+  if (!stats_file_enabled) {
+    return;
+  }
+
+  std::vector<srtla::sender::TelemetrySnapshot> snaps;
+  for (conn_t *c = conns; c != NULL; c = c->next) {
+    if (c->fd < 0) {
+      continue;
+    }
+    /* Only established links are "connections" — a never-registered or
+       timed-out link is not an active uplink (mirrors active_connections). */
+    if (srtla::sender::housekeeping_action(c->last_rcvd, now_s) !=
+        HousekeepingAction::ActiveKeepalive) {
+      continue;
+    }
+
+    srtla::sender::TelemetrySnapshot s;
+    s.conn_id = c->tlm_id;
+    s.rtt_ms = 0; // RTT is a receiver-side metric; the sender does not measure it
+    s.nak_count = c->tlm_nak_count;
+    s.weight_percent = srtla::sender::SENDER_DEFAULT_WEIGHT_PERCENT;
+    s.window = c->window / WINDOW_MULT; // internal milli-packets -> packets
+    s.in_flight = c->in_flight_pkts;
+
+    /* Per-link bitrate from the byte delta since this link's last emit. The
+       first emit has no baseline, so it reports 0 until the next tick. */
+    uint64_t dbytes = c->tlm_bytes_sent - c->tlm_last_bytes;
+    uint64_t dms = (c->tlm_last_ms != 0 && now_ms > c->tlm_last_ms)
+                       ? (now_ms - c->tlm_last_ms)
+                       : 0;
+    s.bitrate_bytes_per_sec =
+        (dms > 0) ? static_cast<uint32_t>((dbytes * 1000ULL) / dms) : 0;
+    c->tlm_last_bytes = c->tlm_bytes_sent;
+    c->tlm_last_ms = now_ms;
+
+    snaps.push_back(s);
+  }
+
+  std::string json = srtla::sender::build_telemetry_json(now_ms, snaps);
+  srtla::sender::write_telemetry_atomic(stats_file_path, json);
+}
+
 #define HOUSEKEEPING_INT 1000 // ms
 void connection_housekeeping() {
   static uint64_t all_failed_at = 0;
@@ -621,49 +725,43 @@ void connection_housekeeping() {
       continue;
     }
 
-    if (conn_timed_out(c, time)) {
+    switch (srtla::sender::housekeeping_action(c->last_rcvd, time)) {
+    case HousekeepingAction::TimedOutReconnect:
       /* When we first detect the connection having failed,
          we reset its status and print a message */
-      if (c->last_rcvd > 0) {
-        spdlog::info("{} ({}): connection failed, attempting to reconnect",
-                     print_addr(&c->src), fmt::ptr(c));
-        c->last_rcvd = 0;
-        c->last_sent = 0;
-        c->window = WINDOW_MIN * WINDOW_MULT;
-        c->in_flight_pkts = 0;
-        for (int i = 0; i < PKT_LOG_SZ; i++) {
-          c->pkt_log[i] = -1;
-        }
+      spdlog::info("{} ({}): connection failed, attempting to reconnect",
+                   print_addr(&c->src), fmt::ptr(c));
+      c->last_rcvd = 0;
+      c->last_sent = 0;
+      c->window = WINDOW_MIN * WINDOW_MULT;
+      c->in_flight_pkts = 0;
+      for (int i = 0; i < PKT_LOG_SZ; i++) {
+        c->pkt_log[i] = -1;
       }
+      /* fall through: drive the same REG2/REG1 exchange as a fresh bootstrap.
+         As the connection has timed out on our end, the receiver might have
+         garbage collected it — try to re-establish rather than keepalive. */
+      [[fallthrough]];
 
-      if (pending_reg2_conn == NULL) {
-        /* As the connection has timed out on our end, the receiver might have
-           garbage collected it. Try to re-establish it rather than send a
-           keepalive */
-        send_reg2(c);
-      } else if (pending_reg2_conn == c) {
-        send_reg1(c);
-      }
-      continue;
-    } else if (c->last_rcvd == 0) {
-      /* Never received anything yet — this connection has not registered.
-         Bootstrap it by driving the same REG2/REG1 exchange the reconnect
-         path uses, but without the timed-out side effects (no window/in_flight
-         reset, no reconnect message). */
+    case HousekeepingAction::BootstrapRegister:
+      /* Never received anything yet (or just reset above): this connection is
+         not registered. Drive the first REG2/REG1 exchange. */
       if (pending_reg2_conn == NULL) {
         send_reg2(c);
       } else if (pending_reg2_conn == c) {
         send_reg1(c);
       }
       continue;
-    } else {
+
+    case HousekeepingAction::ActiveKeepalive:
       /* If a connection has received data in the last CONN_TIMEOUT seconds,
          then it's active */
       active_connections++;
 
-      if ((c->last_sent + IDLE_TIME) < time) {
+      if (srtla::sender::keepalive_due(c->last_sent, time)) {
         send_keepalive(c);
       }
+      break;
     }
   }
 
@@ -699,6 +797,8 @@ void connection_housekeeping() {
   } else {
     all_failed_at = 0;
   }
+
+  emit_telemetry(time, ms);
 
   last_ran = ms;
 }
@@ -744,6 +844,10 @@ int main(int argc, char **argv) {
       .help("Enable verbose logging")
       .default_value(false)
       .implicit_value(true);
+  args.add_argument("--stats-file")
+      .help("Write per-connection telemetry JSON to this path (atomic rename, "
+            "~1s cadence). Telemetry is off when this flag is absent.")
+      .default_value(std::string{});
 
   try {
     args.parse_args(argc, argv);
@@ -754,6 +858,17 @@ int main(int argc, char **argv) {
   }
   if (args.get<bool>("--verbose"))
     spdlog::set_level(spdlog::level::debug);
+
+  std::string stats_file = args.get<std::string>("--stats-file");
+  if (!stats_file.empty()) {
+    stats_file_enabled = true;
+    stats_file_path = stats_file;
+    snprintf(stats_path_c, sizeof(stats_path_c), "%s", stats_file_path.c_str());
+    snprintf(stats_path_tmp_c, sizeof(stats_path_tmp_c), "%s.tmp",
+             stats_file_path.c_str());
+    spdlog::info("Telemetry enabled: writing per-connection stats to {}",
+                 stats_file_path);
+  }
 
   std::string ips_file = args.get<std::string>("ips_file");
   source_ip_file = (char *)ips_file.c_str();
@@ -813,6 +928,10 @@ int main(int argc, char **argv) {
   set_srtla_addr(addrs);
 
   signal(SIGHUP, schedule_update_conns);
+  if (stats_file_enabled) {
+    signal(SIGTERM, remove_stats_and_exit);
+    signal(SIGINT, remove_stats_and_exit);
+  }
 
   int info_int = LOG_PKT_INT;
 

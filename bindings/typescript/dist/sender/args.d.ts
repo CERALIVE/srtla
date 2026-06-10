@@ -5,6 +5,6 @@ export interface SrtlaSendArgsResult {
 }
 /**
  * Build CLI args for srtla_send.
- * Shape: <listen_port> <srtla_host> <srtla_port> <ips_file> [--verbose]
+ * Shape: <listen_port> <srtla_host> <srtla_port> <ips_file> [--verbose] [--stats-file <path>]
  */
 export declare function buildSrtlaSendArgs(input: SrtlaSendOptionsInput): SrtlaSendArgsResult;

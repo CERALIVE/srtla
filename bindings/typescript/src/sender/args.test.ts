@@ -36,4 +36,25 @@ describe("buildSrtlaSendArgs", () => {
 			"/tmp/custom_ips",
 		]);
 	});
+
+	test("includes stats-file flag with path when set", () => {
+		const { args } = buildSrtlaSendArgs({
+			srtlaHost: "relay.example.com",
+			srtlaPort: 8890,
+			statsFile: "/tmp/srtla-send-stats-5000.json",
+		});
+
+		const idx = args.indexOf("--stats-file");
+		expect(idx).toBeGreaterThanOrEqual(0);
+		expect(args[idx + 1]).toBe("/tmp/srtla-send-stats-5000.json");
+	});
+
+	test("omits stats-file flag when unset", () => {
+		const { args } = buildSrtlaSendArgs({
+			srtlaHost: "relay.example.com",
+			srtlaPort: 8890,
+		});
+
+		expect(args).not.toContain("--stats-file");
+	});
 });

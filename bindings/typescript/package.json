@@ -1,6 +1,6 @@
 {
   "name": "@ceralive/srtla",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Type-safe helpers for srtla_send and srtla_rec (args, validation, process helpers).",
   "type": "module",
   "main": "dist/index.js",
@@ -17,6 +17,10 @@
     "./receiver": {
       "import": "./dist/receiver/index.js",
       "types": "./dist/receiver/index.d.ts"
+    },
+    "./telemetry": {
+      "import": "./dist/telemetry/index.js",
+      "types": "./dist/telemetry/index.d.ts"
     }
   },
   "scripts": {

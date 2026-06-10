@@ -164,6 +164,14 @@ double bandwidth_kbits_per_sec = 0.0;
         // Check sender capabilities and current telemetry status
         bool supports_ext_keepalives = conn->stats().supports_extended_keepalives();
         bool has_telemetry = conn->stats().has_valid_sender_telemetry(current_time);
+
+        if (!supports_ext_keepalives && conn->stats().logged_quality_path != 0) {
+            conn->stats().logged_quality_path = 0;
+            spdlog::info("  [{}:{}] [Group: {}] quality_path=legacy",
+                         print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
+                         port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
+                         static_cast<void *>(group.get()));
+        }
         
         // ====================================================================
         // RECEIVER-SIDE METRICS (always applied)
