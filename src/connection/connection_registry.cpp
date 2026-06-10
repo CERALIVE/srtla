@@ -48,10 +48,22 @@ ConnectionRegistry &ConnectionRegistry::instance() {
 
 void ConnectionRegistry::add_group(const ConnectionGroupPtr &group) {
     groups_.push_back(group);
+    if (on_group_registered) {
+        on_group_registered(group->identity());
+    }
 }
 
 void ConnectionRegistry::remove_group(const ConnectionGroupPtr &group) {
-    groups_.erase(std::remove(groups_.begin(), groups_.end(), group), groups_.end());
+    // Find-then-erase (not erase-remove) so the reaped hook fires exactly once:
+    // a repeat teardown of an already-removed group is a no-op with no hook.
+    auto it = std::find(groups_.begin(), groups_.end(), group);
+    if (it == groups_.end()) {
+        return;
+    }
+    if (on_group_reaped) {
+        on_group_reaped(group->identity());
+    }
+    groups_.erase(it);
 }
 
 ConnectionGroupPtr ConnectionRegistry::find_group_by_id(const char *id) {
@@ -156,6 +168,9 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
         }
 
         if (connections.empty() && (group->created_at() + GROUP_TIMEOUT) < current_time) {
+            if (on_group_reaped) {
+                on_group_reaped(group->identity());
+            }
             group_it = groups_.erase(group_it);
             removed_groups++;
             spdlog::info("[Group: {}] group_reaped group={} reason=idle_timeout",

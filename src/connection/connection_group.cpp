@@ -25,6 +25,9 @@ ConnectionGroup::ConnectionGroup(const char *client_id, time_t timestamp)
     std::copy(random_bytes,
               random_bytes + (SRTLA_ID_LEN / 2),
               id_.begin() + (SRTLA_ID_LEN / 2));
+
+    identity_.short_id = short_id();
+    identity_.registered_at = std::chrono::steady_clock::now();
 }
 
 ConnectionGroup::~ConnectionGroup() {
@@ -47,6 +50,38 @@ std::string ConnectionGroup::short_id() const {
                   static_cast<unsigned char>(id_[2]),
                   static_cast<unsigned char>(id_[3]));
     return std::string(buf);
+}
+
+std::vector<std::string> ConnectionGroup::source_address_strings() const {
+    std::vector<std::string> addrs;
+    if (!conns_.empty()) {
+        addrs.reserve(conns_.size());
+        for (const auto &conn : conns_) {
+            auto *sa = const_cast<struct sockaddr *>(
+                reinterpret_cast<const struct sockaddr *>(&conn->address()));
+            if (const char *s = print_addr(sa)) {
+                addrs.emplace_back(s);
+            }
+        }
+        return addrs;
+    }
+
+    // Registration fires before conn 0 joins, and teardown fires after the last
+    // link is reaped; in both windows last_address is the only known source.
+    if (last_addr_.ss_family != 0) {
+        auto *sa = const_cast<struct sockaddr *>(
+            reinterpret_cast<const struct sockaddr *>(&last_addr_));
+        if (const char *s = print_addr(sa)) {
+            addrs.emplace_back(s);
+        }
+    }
+    return addrs;
+}
+
+GroupIdentity ConnectionGroup::identity() const {
+    GroupIdentity snapshot = identity_;
+    snapshot.source_addresses = source_address_strings();
+    return snapshot;
 }
 
 void ConnectionGroup::add_connection(const ConnectionPtr &conn) {

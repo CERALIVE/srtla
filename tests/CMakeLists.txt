@@ -70,6 +70,13 @@ target_link_libraries(test_group_limits PRIVATE receiver_core_obj common_obj)
 srtla_add_test(test_timeout_cleanup test_timeout_cleanup.cpp)
 target_link_libraries(test_timeout_cleanup PRIVATE receiver_core_obj common_obj)
 
+# Service-primitive identity hooks (Task 16): GroupIdentity snapshot + register/
+# teardown extension points fire at the right lifecycle moments with correct
+# data; the default (no-hook) path stays byte-identical and the stream-id
+# resolver's return is never consulted (single SRT target preserved).
+srtla_add_test(test_identity_hooks test_identity_hooks.cpp)
+target_link_libraries(test_identity_hooks PRIVATE receiver_core_obj common_obj)
+
 # Extended-keepalive parsing + sender-telemetry activation/fallback semantics.
 # Pins parse_keepalive_conn_info() and the supports_extended_keepalives /
 # has_valid_sender_telemetry split (including the zero-value EC5 edge).
