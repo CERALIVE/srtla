@@ -10,9 +10,16 @@ FROM alpine:3.20 AS builder
 ARG OPENIRL_SRTLA_REF
 RUN apk add --no-cache linux-headers alpine-sdk cmake git spdlog spdlog-dev
 WORKDIR /src
-RUN git clone https://github.com/OpenIRL/srtla.git . \
+# Retry the network steps: CI has hit transient git exit-128 (clone/fetch) that
+# a clean rerun resolves. find -mindepth 1 -delete clears a partial checkout
+# between attempts without removing the WORKDIR itself.
+RUN n=0; until git clone https://github.com/OpenIRL/srtla.git . ; do \
+      n=$((n+1)); [ "$n" -ge 3 ] && { echo "clone failed after $n attempts" >&2; exit 1; }; \
+      echo "git clone retry $n" >&2; find . -mindepth 1 -delete; sleep 5; \
+    done \
  && git checkout "${OPENIRL_SRTLA_REF}" \
- && git submodule update --init --recursive \
+ && { git submodule update --init --recursive \
+      || { sleep 5; git submodule update --init --recursive; }; } \
  && cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
  && cmake --build build --target srtla_rec -j"$(nproc)"
 

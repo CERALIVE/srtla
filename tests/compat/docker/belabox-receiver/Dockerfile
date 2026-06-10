@@ -1,7 +1,7 @@
 # BELABOX srtla reference receiver (srtla_rec), pinned by SHA.
 # Same repository as the BELABOX sender; only the entrypoint differs.
 # amd64 only.
-ARG BELABOX_SRTLA_REF=2207c3d33de45fb6e359bdd81d01fd910fe5ba1c
+ARG BELABOX_SRTLA_REF=6f3925eb85b0ce75d3b28e65b12e88baed222f71
 
 FROM debian:bookworm-slim AS builder
 ARG BELABOX_SRTLA_REF

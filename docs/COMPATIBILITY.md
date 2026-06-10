@@ -15,7 +15,7 @@ For protocol internals and the handshake flow, see [`HOW_IT_WORKS.md`](HOW_IT_WO
 
 | Implementation | Language | Role | Pin | Tier |
 |---|---|---|---|---|
-| BELABOX/srtla | C | sender + receiver | `v1` | 1 — reference |
+| BELABOX/srtla | C | sender + receiver | `6f3925e` (oldest srtla2) | 1 — reference |
 | irlserver/srtla | C++ | receiver | `main` (no tags) | 1 — upstream base |
 | irlserver/srtla_send | Rust | sender | `v3.0.0` | 1 — extended-KA sender |
 | eerimoq/moblin | Swift | sender (iOS) | `ios-33.8.0-90` | 1 — real-world client |
@@ -55,6 +55,27 @@ Authoritative source: `src/common.h` lines 35-42.
 Other shared constants: `SRTLA_ID_LEN` = 256 bytes, keepalive period = 1 s,
 connection/group timeout = 4 s (upstream default; CeraLive uses 15 s / 30 s for
 cellular resilience — see `src/receiver_config.h`).
+
+### Protocol generation boundary: srtla1 vs srtla2
+
+BELABOX's git history contains two protocol generations, and the distinction
+matters for how the compat matrix pins BELABOX:
+
+- **srtla1** (BELABOX before commit `6f3925e`, 2021-02-04): keepalive + ACK only
+  (`0x9000` / `0x9100`). No `REG1`/`REG2`/`REG3`, no connection groups. A sender
+  this old simply gets `no reply` from a modern receiver and aborts.
+- **srtla2** (BELABOX `6f3925e` onward — *"srtla2: now with receiver support for
+  multiple connections"*): introduces the `REG1`/`REG2`/`REG3` registration
+  handshake and connection groups. Every implementation in the table above —
+  and the entire wire format documented in this file — is srtla2.
+
+The matrix pins BELABOX at the **oldest srtla2 commit** (`6f3925e`) on purpose:
+it maximizes backward-compat coverage by proving our `srtla_rec` still registers
+the earliest registration-capable BELABOX build (Feb 2021). **srtla1 is
+intentionally out of scope** — our receiver correctly does not interoperate with
+a pre-handshake sender, and that non-interop is not a regression. Do not "fix" a
+red blocking pair by pinning BELABOX back to a pre-`6f3925e` SHA; that swaps a
+real backward-compat assertion for a test against a dead protocol generation.
 
 ### Our extensions
 

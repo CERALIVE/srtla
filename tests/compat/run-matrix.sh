@@ -125,7 +125,7 @@ reg  ours               both      local   -                          ours       
 reg  belabox-sender     sender    docker  compat/belabox-sender      belabox-srtla-send    ""
 reg  irlserver-send     sender    docker  compat/irlserver-send      irlserver-srtla-send  ""
 reg  moblin-mock        sender    docker  compat/moblin-mock         moblin-mock           ""
-reg  belabox-receiver   receiver  docker  compat/belabox-receiver    belabox-srtla-rec     "connection group registered"
+reg  belabox-receiver   receiver  docker  compat/belabox-receiver    belabox-srtla-rec     "registered"
 reg  openirl-receiver   receiver  docker  compat/openirl-receiver    openirl-receiver      "Group registered"
 reg  go-srtla           receiver  docker  compat/go-srtla            go-srtla              ""
 reg  go-irl             receiver  docker  compat/go-irl              go-irl                ""
@@ -259,7 +259,11 @@ run_pair() {
     [[ "$rdy" == 1 ]] || log "    warn: receiver readiness marker not seen"
   else
     rx_cname="compat-${pair}-rx-$$"; docker rm -f "$rx_cname" >/dev/null 2>&1
-    docker run -d --name "$rx_cname" --network host \
+    # --init (tini as PID 1): the kernel applies no default signal action to
+    # PID 1, so an external srtla_rec with no SIGTERM handler would ignore
+    # `docker stop` and be SIGKILLed (137). tini forwards SIGTERM so the child
+    # exits cleanly (143) — without it teardown fails for reasons unrelated to interop.
+    docker run -d --init --name "$rx_cname" --network host \
       -e SRTLA_PORT="$SRTLA_PORT" -e SRT_TARGET_HOST=127.0.0.1 \
       -e SRT_TARGET_PORT="$SINK_PORT" "${IMAGE[$receiver]}" >/dev/null 2>&1
     track_container "$rx_cname"
@@ -283,7 +287,7 @@ run_pair() {
     ff_pid=$!; track_pid "$ff_pid"
   else
     tx_cname="compat-${pair}-tx-$$"; docker rm -f "$tx_cname" >/dev/null 2>&1
-    docker run -d --name "$tx_cname" --network host \
+    docker run -d --init --name "$tx_cname" --network host \
       -e RECEIVER_HOST=127.0.0.1 -e RECEIVER_PORT="$target_srtla_port" \
       -e LOCAL_SRT_PORT="$LOCAL_SRT_PORT" -e IPS=127.0.0.1 \
       "${IMAGE[$sender]}" >/dev/null 2>&1
@@ -350,10 +354,18 @@ run_pair() {
 
   # ---- criteria ----
   local handshake_ok=false bytes_ok=false disc_ok=false teardown_ok=false
-  # handshake: end-to-end first byte within 5s; if the receiver marker is known
-  # it must also be present in the log ("parsed from receiver log").
+  # handshake proof = end-to-end first byte within 5s: data cannot cross
+  # srtla_rec without a completed REG1/REG2/REG3 registration. For our OWN
+  # receiver we additionally require the registration log marker (we own that
+  # line). We do NOT gate on an external impl's exact log wording — that tests
+  # their logging, not interop; marker_found is still recorded for visibility.
+  # Falsifiability is preserved: --scenario port-mismatch yields no first byte.
   if [[ "$first_byte" -ge 0 && "$first_byte" -le 5000 ]]; then
-    if [[ -z "$rx_marker" || "$marker_found" == true ]]; then handshake_ok=true; fi
+    if [[ "${KIND[$receiver]}" == "local" ]]; then
+      [[ -z "$rx_marker" || "$marker_found" == true ]] && handshake_ok=true
+    else
+      handshake_ok=true
+    fi
   fi
   [[ "$bytes" -ge 1000 ]] && bytes_ok=true
   [[ "$disc" -eq 0 ]] && disc_ok=true

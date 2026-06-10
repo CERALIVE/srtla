@@ -5,11 +5,20 @@
 senders:
   - name: belabox-srtla-send
     repo: https://github.com/BELABOX/srtla
-    pin: 2207c3d33de45fb6e359bdd81d01fd910fe5ba1c
+    pin: 6f3925eb85b0ce75d3b28e65b12e88baed222f71
     role: sender
     build: docker/belabox-sender/Dockerfile
     tier: blocking
-    notes: "BELABOX reference sender; tag v1"
+    notes: >-
+      BELABOX reference sender, pinned to the *oldest srtla2* commit
+      ("srtla2: now with receiver support for multiple connections",
+      2021-02-04) — the first BELABOX revision that speaks the REG1/REG2/REG3
+      handshake. This is deliberately the earliest interoperable srtla2 build so
+      the blocking tier proves our modern srtla_rec still accepts a 4-year-old
+      field sender (maximum backward-compat surface). Do NOT move this back to
+      pre-2021-02-04 SHAs: those are srtla1 (keepalive/ack only, no registration)
+      — a different, superseded protocol generation we intentionally do not
+      support. See docs/COMPATIBILITY.md.
 
   - name: irlserver-srtla-send
     repo: https://github.com/irlserver/srtla_send
@@ -30,11 +39,15 @@ senders:
 receivers:
   - name: belabox-srtla-rec
     repo: https://github.com/BELABOX/srtla
-    pin: 2207c3d33de45fb6e359bdd81d01fd910fe5ba1c
+    pin: 6f3925eb85b0ce75d3b28e65b12e88baed222f71
     role: receiver
     build: docker/belabox-receiver/Dockerfile
     tier: blocking
-    notes: "BELABOX reference receiver; same repo as sender"
+    notes: >-
+      BELABOX reference receiver; same repo and same oldest-srtla2 pin as the
+      sender entry (2021-02-04). Tests that our modern srtla_send still registers
+      against the earliest srtla2 receiver. Pre-2021-02-04 SHAs are srtla1 and
+      out of scope — see the belabox-srtla-send note and docs/COMPATIBILITY.md.
 
   - name: openirl-receiver
     repo: https://github.com/OpenIRL/srtla-receiver

@@ -10,7 +10,7 @@
 # Its Makefile derives VERSION from `git rev-parse`, so the build stage keeps
 # the cloned .git directory available during `make`.
 
-ARG PIN=37862da3d0c13b46956efd3f88877053293d97d6
+ARG PIN=6f3925eb85b0ce75d3b28e65b12e88baed222f71
 
 # --- build stage -----------------------------------------------------------
 FROM ubuntu:22.04 AS builder
