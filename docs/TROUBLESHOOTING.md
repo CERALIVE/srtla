@@ -355,3 +355,32 @@ ping -I 10.0.0.10 <receiver_ip>
 # TCP test through specific source
 curl --interface 10.0.0.10 http://example.com
 ```
+
+### Structured Lifecycle Events (receiver)
+
+`srtla_rec` emits one-line, greppable events for the per-group lifecycle at the
+default `info` level. Each carries a short group handle (`group=` — the first
+four id bytes as hex) so a single group can be followed end to end. They fire
+only on state transitions (never per packet), so the log stays small even for
+long sessions.
+
+| Event | When | Fields |
+|-------|------|--------|
+| `group_registered` | a new group is created (REG1 accepted) | `group=` + source addr in the line prefix |
+| `conn_added` | a new link joins the group (first REG2) | `group=`, `conns=` (new total) |
+| `conn_removed` | a link is reaped | `group=`, `reason=timeout\|recovery_fail`, `conns=` (remaining) |
+| `group_reaped` | an idle, empty group is removed | `group=`, `reason=idle_timeout` |
+| `quality_path` | first quality evaluation per link | `=telemetry` (extended keepalive) or `=legacy` (receiver-only) |
+
+`reason=recovery_fail` marks a link that was in connection-recovery mode when it
+finally timed out; `reason=timeout` is a plain idle timeout.
+
+Follow one group through its whole lifecycle:
+```bash
+# discover the handle, then trace just that group
+grep group_registered srtla_rec.log
+grep 'group=5a69ef80' srtla_rec.log
+
+# or watch every transition live
+grep -E 'group_registered|conn_added|conn_removed|group_reaped|quality_path=' srtla_rec.log
+```

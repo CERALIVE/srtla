@@ -67,7 +67,17 @@ this current behavior. It is **not** a crash or a correctness bug — at the cap
 the next REG1 is cleanly rejected with `REG_ERR`
 (`GroupLimits.AtMaxGroups_Reg1GetsRegErr`) and `GROUP_TIMEOUT` reaps idle
 groups — and a well-behaved sender only emits REG1 from link 0. It is recorded
-here as a denial-of-service hardening lever Task 15 may wish to bound (e.g.
-id-based group dedupe or a per-source REG1 rate limit). Changing it would flip
-the `DuplicateReg1SameIdHalf_CreatesDistinctGroups` expectation, so update that
-pin together with any fix.
+here as a denial-of-service hardening lever (e.g. id-based group dedupe or a
+per-source REG1 rate limit). Changing it would flip the
+`DuplicateReg1SameIdHalf_CreatesDistinctGroups` expectation, so update that pin
+together with any fix.
+
+**Task 15 outcome.** Task 15 reviewed this worklist and found **no
+`*_KNOWNBUG` test** — every reproducer is green, so no production behavior was
+changed (the rule is: no fix without a driving RED test). In particular the
+id-dedupe lever above was left as-is; bounding it needs its own task that flips
+the pin under test. Task 15 instead added per-group structured lifecycle events
+to `srtla_rec` (`group_registered`, `conn_added`, `conn_removed reason=…`,
+`group_reaped reason=…`, alongside the existing `quality_path=…`) for
+operator-visible register→stream→timeout→reap tracing. See
+`docs/TROUBLESHOOTING.md` → *Structured Lifecycle Events*.

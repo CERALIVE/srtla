@@ -39,6 +39,16 @@ ConnectionGroup::~ConnectionGroup() {
     }
 }
 
+std::string ConnectionGroup::short_id() const {
+    char buf[9];
+    std::snprintf(buf, sizeof(buf), "%02x%02x%02x%02x",
+                  static_cast<unsigned char>(id_[0]),
+                  static_cast<unsigned char>(id_[1]),
+                  static_cast<unsigned char>(id_[2]),
+                  static_cast<unsigned char>(id_[3]));
+    return std::string(buf);
+}
+
 void ConnectionGroup::add_connection(const ConnectionPtr &conn) {
     conns_.push_back(conn);
 }

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -23,6 +24,10 @@ public:
     ~ConnectionGroup();
 
     const std::array<char, SRTLA_ID_LEN> &id() const { return id_; }
+
+    // Stable, low-cardinality handle for structured lifecycle logs: the first
+    // four id bytes as hex. Greppable per group without leaking the full id.
+    std::string short_id() const;
 
     void add_connection(const ConnectionPtr &conn);
     void remove_connection(const ConnectionPtr &conn);

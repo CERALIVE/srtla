@@ -232,10 +232,13 @@ int SRTLAHandler::register_group(const struct sockaddr_storage *addr, const char
     }
 
     registry_.add_group(group);
-    spdlog::info("[{}:{}] [Group: {}] Group registered",
+    // Keep "Group registered" verbatim — the compat harness greps it as the
+    // handshake marker; group_registered is the structured lifecycle event.
+    spdlog::info("[{}:{}] [Group: {}] Group registered | group_registered group={}",
                  print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                  port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
-                 static_cast<void *>(group.get()));
+                 static_cast<void *>(group.get()),
+                 group->short_id());
     return 0;
 }
 
@@ -300,10 +303,21 @@ int SRTLAHandler::register_connection(const struct sockaddr_storage *addr, const
     group->write_socket_info_file();
     group->set_last_address(*addr);
 
-    spdlog::info("[{}:{}] [Group: {}] Connection registration",
-                 print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
-                 port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
-                 static_cast<void *>(group.get()));
+    // Keep "Connection registration" verbatim (compat-harness marker). conn_added
+    // fires only when a new link actually joins, not on idempotent REG2 retries.
+    if (!already_registered) {
+        spdlog::info("[{}:{}] [Group: {}] Connection registration | conn_added group={} conns={}",
+                     print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
+                     port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
+                     static_cast<void *>(group.get()),
+                     group->short_id(),
+                     group->connections().size());
+    } else {
+        spdlog::info("[{}:{}] [Group: {}] Connection registration",
+                     print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
+                     port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
+                     static_cast<void *>(group.get()));
+    }
     return 0;
 }
 

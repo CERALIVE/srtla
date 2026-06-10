@@ -114,6 +114,10 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
         for (auto conn_it = connections.begin(); conn_it != connections.end();) {
             auto conn = *conn_it;
 
+            // Snapshot before the recovery branch clears recovery_start, so a
+            // reaped link reads recovery_fail vs a plain idle timeout.
+            const bool was_recovering = conn->recovery_start() > 0;
+
             if (conn->recovery_start() > 0) {
                 if (conn->last_received() > conn->recovery_start()) {
                     if ((current_time - conn->recovery_start()) > RECOVERY_CHANCE_PERIOD) {
@@ -133,12 +137,16 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
             }
 
             if (conn_timed_out(conn, current_time)) {
+                const char *reason = was_recovering ? "recovery_fail" : "timeout";
                 conn_it = connections.erase(conn_it);
                 removed_connections++;
-                spdlog::info("[{}:{}] [Group: {}] Connection removed (timed out)",
+                spdlog::info("[{}:{}] [Group: {}] conn_removed group={} reason={} conns={}",
                              print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                              port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
-                             static_cast<void *>(group.get()));
+                             static_cast<void *>(group.get()),
+                             group->short_id(),
+                             reason,
+                             connections.size());
             } else {
                   if (keepalive_cb && (conn->last_received() + KEEPALIVE_PERIOD) < current_time) {
                     keepalive_cb(conn, current_time);
@@ -150,7 +158,8 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
         if (connections.empty() && (group->created_at() + GROUP_TIMEOUT) < current_time) {
             group_it = groups_.erase(group_it);
             removed_groups++;
-            spdlog::info("[Group: {}] Group removed (no connections)", static_cast<void *>(group.get()));
+            spdlog::info("[Group: {}] group_reaped group={} reason=idle_timeout",
+                         static_cast<void *>(group.get()), group->short_id());
         } else {
             if (before_conns != connections.size()) {
                 group->write_socket_info_file();
