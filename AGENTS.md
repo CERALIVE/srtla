@@ -9,7 +9,7 @@ Bonds multiple uplinks (LTE, WiFi) into a single SRT stream. Produces `srtla_sen
 Consumers:
 - **CeraUI backend** — TS bindings via `link:../../../srtla/bindings/typescript` (`@ceralive/srtla`)
 - **Device image** — `srtla` .deb (built by `image-building-pipeline`)
-- **obs-srtla-sender-plugin** — runtime dep only, not in device image
+- **obs-srtla-sender-plugin** — retired 2026-06-11 (was a runtime dep only, never in the device image; repo retained on GitHub)
 
 ## OVERVIEW
 

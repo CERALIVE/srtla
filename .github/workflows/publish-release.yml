@@ -223,7 +223,7 @@ jobs:
             srt
               └── srtla (this package)
                     │
-                    └── Used by: ceracoder → ceralive-device
+                    └── Used by: cerastream → ceralive-device
             ```
 
             ### Debian Packages

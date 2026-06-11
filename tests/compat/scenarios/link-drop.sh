@@ -190,7 +190,7 @@ sleep 0.6
 # The SRT caller must be configured to ride through a multi-second link
 # transition: a deep send buffer absorbs the brief stall while srtla shifts off
 # the dead link, and a generous I/O timeout stops libsrt aborting the muxer the
-# instant a send would block. A real SRTLA caller (ceracoder/Moblin) is tuned
+# instant a send would block. A real SRTLA caller (cerastream/Moblin) is tuned
 # the same way; ffmpeg's tiny defaults would otherwise tear the stream down.
 # NB: ffmpeg's SRT latency/timeout options are in MICROSECONDS, not ms.
 SRT_LATENCY_US=$(( SRT_LATENCY_MS * 1000 ))
@@ -316,7 +316,7 @@ pass=false
 # property (the caller's send window stalls on the in-flight packets lost with
 # the link, against ffmpeg's fixed ~5s peer-idle timeout) — orthogonal to the
 # sender's bonding correctness, which IS asserted above (shift + survivor +
-# recovery). A production caller (ceracoder/Moblin) is tuned to ride it through.
+# recovery). A production caller (cerastream/Moblin) is tuned to ride it through.
 
 jq -n \
   --argjson pass "$pass" \
