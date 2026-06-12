@@ -106,6 +106,15 @@ inline bool keepalive_due(time_t last_sent, time_t now) {
   return (last_sent + SENDER_IDLE_TIME) < now;
 }
 
+// Detailed reload error information for logging.
+enum class ReloadError {
+  None,           // No error, reload should apply
+  FileNotFound,   // File cannot be opened
+  FileEmpty,      // File exists but contains no valid IPs
+  InvalidLine,    // File contains invalid IP lines (but may have valid ones)
+  ZeroValidIPs,   // File exists but all lines are invalid
+};
+
 // Count how many parseable IPv4 source addresses a source-ip file contains,
 // without mutating any global connection state. Returns 0 for a file that
 // cannot be opened, is empty, or contains only unparseable lines.
@@ -137,6 +146,62 @@ inline int count_parseable_source_ips(const char *path) {
   free(line);
   fclose(f);
   return count;
+}
+
+// Detailed reload error analysis: returns specific error type and optionally
+// populates error_line_num with the line number of the first invalid line
+// (1-indexed). Used for precise error logging in update_conns().
+inline ReloadError analyze_reload_error(const char *path, int *error_line_num = nullptr) {
+  FILE *f = fopen(path, "r");
+  if (f == nullptr) {
+    return ReloadError::FileNotFound;
+  }
+
+  int count = 0;
+  int line_num = 0;
+  char *line = nullptr;
+  size_t line_len = 0;
+  bool has_invalid_line = false;
+  int first_invalid_line = 0;
+
+  while (getline(&line, &line_len, f) >= 0) {
+    line_num++;
+    char *nl = strchr(line, '\n');
+    if (nl != nullptr) {
+      *nl = '\0';
+    }
+    // Skip empty lines
+    if (line[0] == '\0') {
+      continue;
+    }
+    struct sockaddr_in src;
+    if (parse_ip(&src, line) == 0) {
+      count++;
+    } else {
+      has_invalid_line = true;
+      if (first_invalid_line == 0) {
+        first_invalid_line = line_num;
+      }
+    }
+  }
+
+  free(line);
+  fclose(f);
+
+  if (error_line_num != nullptr && first_invalid_line > 0) {
+    *error_line_num = first_invalid_line;
+  }
+
+  if (count == 0 && line_num == 0) {
+    return ReloadError::FileEmpty;
+  }
+  if (count == 0 && has_invalid_line) {
+    return ReloadError::ZeroValidIPs;
+  }
+  if (has_invalid_line) {
+    return ReloadError::InvalidLine;
+  }
+  return ReloadError::None;
 }
 
 // Predicate form of the reload guard, for callers that already have a count.
