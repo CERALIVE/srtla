@@ -99,6 +99,22 @@ target_compile_features(test_fake_clock PRIVATE cxx_std_17)
 target_compile_options(test_fake_clock PRIVATE -Wall -Wextra)
 gtest_discover_tests(test_fake_clock TEST_PREFIX "fake_clock.")
 
+# Timeout boundary contracts under high-RTT / jitter (PR2, Task 9): receiver
+# reaper (CONN_TIMEOUT boundary, keepalive-jitter survival, recovery-window
+# throttle defect) via cleanup_inactive()'s injected clock, and the sender
+# watchdog (boundary, benign-jitter survival, false-down defect, dead-link
+# detection) via the pure conn_is_timed_out() predicate — no real sleeps. Two
+# cases are RED (document defects fixed in Tasks 14/15). Inline registration
+# with a "timeout_boundaries." TEST_PREFIX so `ctest -R timeout_boundaries`
+# selects exactly this suite. Links like test_timeout_cleanup.
+add_executable(test_timeout_boundaries test_timeout_boundaries.cpp)
+target_link_libraries(test_timeout_boundaries
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_timeout_boundaries PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_timeout_boundaries PRIVATE cxx_std_17)
+target_compile_options(test_timeout_boundaries PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_timeout_boundaries TEST_PREFIX "timeout_boundaries.")
+
 # Service-primitive identity hooks (Task 16): GroupIdentity snapshot + register/
 # teardown extension points fire at the right lifecycle moments with correct
 # data; the default (no-hook) path stays byte-identical and the stream-id
