@@ -207,8 +207,8 @@ public:
         }
         epoll_fd_ = ::epoll_create1(0);
         srt_addr_ = loopback_addr(9); // discard port; unused on the reg/keepalive paths
-        srt_handler_ = std::make_unique<protocol::SRTHandler>(recv_sock_, srt_addr_, epoll_fd_, registry_);
-        handler_ = std::make_unique<protocol::SRTLAHandler>(recv_sock_, registry_, *srt_handler_, metrics_);
+        srt_handler_ = std::make_unique<protocol::SRTHandler>(recv_sock_, srt_addr_, epoll_fd_, registry_, rate_limiter_);
+        handler_ = std::make_unique<protocol::SRTLAHandler>(recv_sock_, registry_, *srt_handler_, metrics_, rate_limiter_);
     }
 
     ~HandlerHarness() {
@@ -250,6 +250,7 @@ private:
     struct sockaddr_storage srt_addr_ {};
     connection::ConnectionRegistry registry_;
     quality::MetricsCollector metrics_;
+    utils::AuthRateLimiter rate_limiter_;
     std::unique_ptr<protocol::SRTHandler> srt_handler_;
     std::unique_ptr<protocol::SRTLAHandler> handler_;
 };

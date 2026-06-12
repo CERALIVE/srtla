@@ -84,7 +84,9 @@ ConnectionPtr make_conn(uint16_t port, time_t last_received) {
 ConnectionGroupPtr make_group(time_t created_at) {
     std::array<char, SRTLA_ID_LEN> id{};
     std::memcpy(id.data(), "timeout-cleanup-group", 21);
-    return std::make_shared<ConnectionGroup>(id.data(), created_at);
+    auto group = std::make_shared<ConnectionGroup>(id.data(), created_at);
+    group->mark_data_seen();
+    return group;
 }
 
 } // namespace
