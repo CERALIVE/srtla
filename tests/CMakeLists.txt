@@ -86,6 +86,19 @@ gtest_discover_tests(test_ghost_group_eviction TEST_PREFIX "ghost_group.")
 srtla_add_test(test_timeout_cleanup test_timeout_cleanup.cpp)
 target_link_libraries(test_timeout_cleanup PRIVATE receiver_core_obj common_obj)
 
+# Millisecond-resolution fake clock (PR2 infra for the latency suites, Tasks 8/9):
+# proves QualityEvaluator's injected MsClock drives the bandwidth/eval window at
+# 1ms / 50ms / 999ms resolution and that the default ctor keeps the production
+# get_ms path. Inline registration with a "fake_clock." TEST_PREFIX so
+# `ctest -R fake_clock` selects exactly this suite. Links like test_timeout_cleanup.
+add_executable(test_fake_clock test_fake_clock.cpp)
+target_link_libraries(test_fake_clock
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_fake_clock PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_fake_clock PRIVATE cxx_std_17)
+target_compile_options(test_fake_clock PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_fake_clock TEST_PREFIX "fake_clock.")
+
 # Service-primitive identity hooks (Task 16): GroupIdentity snapshot + register/
 # teardown extension points fire at the right lifecycle moments with correct
 # data; the default (no-hook) path stays byte-identical and the stream-id

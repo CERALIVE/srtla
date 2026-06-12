@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 
 #include "metrics_collector.h"
 #include "../connection/connection_group.h"
@@ -16,7 +17,20 @@ struct QualityMetrics {
 
 class QualityEvaluator {
 public:
-    QualityEvaluator() = default;
+    // Millisecond clock seam used for the bandwidth/eval window. Mirrors the
+    // common.h get_ms contract: returns 0 on success and writes the current
+    // monotonic millisecond timestamp into *ms; a non-zero return signals
+    // failure. Production threads the real get_ms through here unchanged; the
+    // latency test suites (Tasks 8/9) inject a fake clock so RTT-window and
+    // timeout boundaries can be exercised at millisecond resolution with no
+    // real waits. Not a global — each evaluator owns its clock.
+    using MsClock = std::function<int(uint64_t *)>;
+
+    // Default: production monotonic clock (wraps get_ms, byte-identical path).
+    QualityEvaluator();
+    // Inject a millisecond clock for deterministic tests. A null clock falls
+    // back to the production default.
+    explicit QualityEvaluator(MsClock ms_clock);
 
     void evaluate_group(connection::ConnectionGroupPtr group,
                         time_t current_time);
@@ -51,6 +65,8 @@ private:
                                     double packet_loss_ratio,
                                     double performance_ratio,
                                     time_t current_time);
+
+    MsClock ms_clock_;
 };
 
 } // namespace srtla::quality

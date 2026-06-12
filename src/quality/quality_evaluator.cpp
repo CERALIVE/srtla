@@ -38,6 +38,15 @@ namespace srtla::quality {
 using srtla::connection::ConnectionGroupPtr;
 using srtla::connection::ConnectionPtr;
 
+namespace {
+int production_ms_clock(uint64_t *ms) { return get_ms(ms); }
+} // namespace
+
+QualityEvaluator::QualityEvaluator() : ms_clock_(production_ms_clock) {}
+
+QualityEvaluator::QualityEvaluator(MsClock ms_clock)
+    : ms_clock_(ms_clock ? std::move(ms_clock) : MsClock(production_ms_clock)) {}
+
 void QualityEvaluator::evaluate_group(ConnectionGroupPtr group, time_t current_time) {
     if (!group || group->connections().empty() || !group->load_balancing_enabled()) {
         return;
@@ -51,7 +60,7 @@ void QualityEvaluator::evaluate_group(ConnectionGroupPtr group, time_t current_t
 
 group->set_total_target_bandwidth(0);
     uint64_t current_ms = 0;
-    if (get_ms(&current_ms) != 0) {
+    if (ms_clock_(&current_ms) != 0) {
         spdlog::error("[Group: {}] Failed to get current timestamp for quality evaluation", 
                       static_cast<void *>(group.get()));
         return;
