@@ -262,7 +262,12 @@ void handle_srt_data(int fd) {
     } else {
       /* If sending the packet fails, adjust the timestamp to disable the link
          until a reconnection is confirmed. 1 so connection_housekeeping()
-         prints its message */
+         prints its message.
+         Rationale: fixes SenderFalselyDownsAliveLinkOnSubReceiverTimeoutGap
+         (Task 9 case d) — this hard-failure path is the timeout-INDEPENDENT
+         fast dead-link detector: an isolated / torn-down link fails sendto()
+         immediately, so SENDER_CONN_TIMEOUT can match the receiver's 15 s
+         window (sender_logic.h) without slowing real link-drop detection. */
       c->last_rcvd = 1;
       spdlog::error("{} ({}): sendto() failed, disabling the connection",
                     print_addr(&c->src), fmt::ptr(c));

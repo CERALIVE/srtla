@@ -46,8 +46,25 @@ namespace srtla::sender {
 
 // Sender connection timing constants — single source of truth shared between
 // sender.cpp and the unit tests.
-inline constexpr time_t SENDER_CONN_TIMEOUT = 4; // s of inbound silence => failed
-inline constexpr time_t SENDER_IDLE_TIME = 1;    // s before an idle link is pinged
+//
+// Rationale: fixes SenderFalselyDownsAliveLinkOnSubReceiverTimeoutGap (Task 9
+// case d). The passive inbound-silence timeout is aligned with the receiver's
+// CONN_TIMEOUT (receiver_config.h, 15 s). Below that window the receiver still
+// holds the link and keeps echoing keepalives, so the two ends must agree on
+// liveness: a sender that gives up 3.75x sooner (the old 4 s) needlessly
+// re-registers and resets the window to WINDOW_MIN on a link that is merely
+// mid radio-stall (the "server in another country" false link-down) while the
+// receiver and the physical link are fine.
+//
+// Detection latency for a genuinely dead link is NOT sacrificed: it is caught
+// by a timeout-independent path — a hard send failure (sendto() error on an
+// isolated / torn-down link) immediately disables the connection in
+// handle_srt_data() (sender.cpp), and a struggling link is deselected by
+// select_conn() scoring within ~1 s. This widening only suppresses the sub-15 s
+// false positives; it does not slow real link-drop shifts (link-drop.sh /
+// link-drop-high-rtt.sh detect via the sendto-failure path in <1 s).
+inline constexpr time_t SENDER_CONN_TIMEOUT = 15; // s of inbound silence => failed (matches receiver CONN_TIMEOUT)
+inline constexpr time_t SENDER_IDLE_TIME = 1;     // s before an idle link is pinged
 
 // A connection that has never received anything (last_rcvd == 0) is *not yet
 // established*, not timed out.

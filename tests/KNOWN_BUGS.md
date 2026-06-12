@@ -105,6 +105,21 @@ driving test (no fix without a test).
   links. Driven by `test_sender_bootstrap.cpp` (unit) and the
   `sighup-reload.sh` invalid-reload phase (end-to-end).
 
+- **Receiver-matched silence timeout (sender false-down fix).**
+  `SENDER_CONN_TIMEOUT` was 4 s — 3.75x tighter than the receiver's
+  `CONN_TIMEOUT` (15 s). For any inbound gap in (4 s, 15 s) the receiver still
+  held the link and kept echoing keepalives while the sender declared it dead
+  and forced a re-register + window reset to `WINDOW_MIN` — the "server in
+  another country" false link-down on a jittery-but-alive high-RTT uplink. It is
+  now aligned to the receiver's 15 s window in `src/sender_logic.h`, so the two
+  ends agree on liveness. Dead-link detection latency is **not** sacrificed: a
+  hard send failure disables a link immediately via the timeout-independent
+  sendto-failure path in `handle_srt_data()`, so real link-drops still shift in
+  <1 s (`link-drop.sh` ~457 ms, `link-drop-high-rtt.sh` ~888 ms — both via that
+  path, not the passive timeout). Driven by `test_timeout_boundaries.cpp`:
+  `SenderFalselyDownsAliveLinkOnSubReceiverTimeoutGap` flips red→green while
+  `SenderDeadLinkDetectedWithinFourToFiveSeconds` stays green.
+
 ### New harness scenarios (`tests/compat/scenarios/`)
 
 | Scenario | Proves |
