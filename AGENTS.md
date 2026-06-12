@@ -114,7 +114,8 @@ GTest suites under `tests/` (all must stay green; run via `ctest` after a normal
 | `test_registration_handshake.cpp` | REG1/REG2/REG3 state machine, malformed-frame contracts |
 | `test_extended_keepalive.cpp` | Extended-KA activation, fallback, and edge semantics |
 | `test_reg_race.cpp` | REG3/NGP race, concurrent multi-interface registration |
-| `test_group_limits.cpp` | MAX_GROUPS exhaustion, REG_ERR at cap |
+| `test_group_limits.cpp` | MAX_GROUPS exhaustion, REG_ERR at cap (fillers are data-seen — see RECEIVER HARDENING) |
+| `test_ghost_group_eviction.cpp` | Ghost-group reaping/eviction at PENDING_GROUP_TIMEOUT; data-seen groups protected |
 | `test_timeout_cleanup.cpp` | Per-connection and group timeout/cleanup paths |
 | `test_identity_hooks.cpp` | GroupIdentity extension hooks (see `docs/EXTENSION_POINTS.md`) |
 | `test_telemetry_emit.cpp` | ADR-001 stats-file serialization, atomic publish, staleness |
@@ -144,6 +145,40 @@ Key facts for consumers:
 The TS binding reader lives in `bindings/typescript/src/sender/` alongside the existing
 spawn/args helpers. It is an **additive** export — existing exports (`srtlaSendOptionsSchema`,
 `buildSrtlaSendArgs`, spawn helpers) are frozen and unchanged.
+
+## RECEIVER HARDENING
+
+`srtla_rec` is a pre-auth UDP relay: a REG1 creates a connection group before any
+SRT handshake, and the actual stream auth happens downstream at the SRT server.
+Two upstream commits (`irlserver/main` `7855012`, `39e324a`) close the resulting
+pre-auth abuse surfaces. All knobs live in `src/receiver_config.h`.
+
+**1. Ghost-group eviction (anti table-exhaustion DoS).** A group that registered
+but never forwarded real SRT data is a "ghost". `ConnectionGroup::mark_data_seen()`
+is set on the first forwarded SRT packet (`SRTLAHandler::process_single_packet`),
+promoting the group to non-evictable.
+
+- Empty groups are reaped at `PENDING_GROUP_TIMEOUT` (5 s) if they never saw data,
+  vs `GROUP_TIMEOUT` (30 s) once promoted (`ConnectionRegistry::cleanup_inactive`).
+- At `MAX_GROUPS` (200) a new REG1 evicts the oldest ghost before returning
+  `REG_ERR` (`evict_oldest_pending_group()`), so a REG1 flood cannot lock out the
+  real broadcaster. Eviction skips any group with live connections or `data_seen`.
+
+**2. Per-IP auth-fail rate limiter.** `src/utils/auth_rate_limiter.{cpp,h}`
+(linked into `receiver_core_obj`). A failed SRT auth — a libsrt handshake reject,
+or (as srt-live-server does) an SRT `SHUTDOWN` before the group is `established`
+(server ACK seen) — is counted per source IP; a failed-auth group is torn down
+immediately to reclaim its slot. Keys are IP-only so port rotation does not evade.
+
+- `AUTH_FAIL_THRESHOLD` = 5 failures within
+- `AUTH_FAIL_WINDOW` = 60 s trips a block; new REG1s are refused for
+- `AUTH_FAIL_COOLDOWN` = 60 s. Lenient by design so a mistyped passphrase or
+  several broadcasters behind one NAT are not locked out.
+
+Test-infra note: pre-existing receiver tests model **real** streaming groups, so
+their group factories call `mark_data_seen()` (`test_group_limits`,
+`test_timeout_cleanup`); the ghost/eviction behavior itself is pinned by
+`test_ghost_group_eviction.cpp`.
 
 ## ANTI-PATTERNS
 
