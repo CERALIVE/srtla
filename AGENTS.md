@@ -56,6 +56,7 @@ Don't duplicate — read the source files:
 | `docs/keepalive-improvements.md` | NAT keepalive design notes |
 | `docs/connection-info-comparison.md` | Per-connection quality tracking design |
 | `docs/adr/ADR-001-telemetry-ipc.md` | Decision record: sender telemetry IPC transport (Option A — stats file) |
+| `docs/adr/ADR-002-srt-patch-necessity.md` | Decision record: srt-patch necessity verdict and omission path (SAFE verdict, Task 20 authorized) |
 
 ## BUILD
 
