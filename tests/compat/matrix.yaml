@@ -168,31 +168,23 @@ scenarios:
       disconnects == 0 — jitter alone must never kill a healthy link
       (stresses RTT_VARIANCE_THRESHOLD=50ms end-to-end).
 
-excluded:
-  - name: moblink-rust
-    repo: https://github.com/datagutt/moblink-rust
-    reason: "WebSocket-based Moblink relay protocol, not SRTLA — no 0x9200-range constants found in src/; uses JSON serialization and WebSocket transport (src/protocol.rs, src/streamer.rs)"
-    studied_at: "dbf44769144f46541e7f47ed29c4b4b037f50cbd"
-
-# Standalone latency/fault scenarios under tests/compat/scenarios/. These run
-# directly (not via the sender×receiver pair loop above). A "blocking" scenario
-# gates PR CI where the runner is privileged (CAP_NET_ADMIN for veth/netns/tc);
-# on an unprivileged runner it self-skips (exit 3) rather than failing.
-scenarios:
   - name: reorder-stress
     script: tests/compat/scenarios/reorder-stress.sh
-    tier: blocking
-    privileged: true
-    notes: >-
-      Cross-link packet-reordering stress — THE core SRTLA failure mode. Two
-      bonded source IPs are shaped with asymmetric per-link delay (50ms/150ms)
-      plus an explicit `netem reorder 25% 50% delay 20ms` phase, proving the
-      bonded SRT stream rides out-of-order arrival (bytes_received >= 5000,
-      disconnects == 0 over >= 30s). Doubles as the measurement instrument for
-      the srt-patch A/B/C evaluation: SINK_LD_LIBRARY_PATH selects the receiver
-      libsrt build and SINK_EXTRA_ARGS passes srt-sink SRT flags (e.g.
-      --nakreport 0 --lossmaxttl 30). The script makes no A/B/C judgement; it
-      emits one machine-parseable summary line per run for the analysis.
+    requires: netem        # CAP_NET_ADMIN + ip/tc; gated via netem_require
+    skip_exit: 77          # SKIP-PRIVILEGED, mirrors netem_require / pcap-replay
+    gated_on_disconnects: true
+    proves: >-
+      Cross-link packet reordering — THE core SRTLA stress. Two bonded source
+      IPs ride one tc-netem-shaped veth into a private netns hosting
+      srtla_rec + srt-sink, shaped with asymmetric per-link delay (50ms/150ms,
+      prio+u32 classified per source) plus an explicit `netem reorder 25% 50%
+      delay 20ms` phase on the fast link. Gates: handshake, bytes_received >=
+      5000 and disconnects == 0 over >= 30s, and the reorder phase provably
+      active (non-zero packets through the reorder-configured qdisc). Doubles as
+      the srt-patch A/B/C measurement instrument: SINK_LD_LIBRARY_PATH selects
+      the receiver libsrt build and SINK_EXTRA_ARGS passes srt-sink flags (e.g.
+      --nakreport 0 --lossmaxttl 30); it emits one machine-parseable summary
+      line and makes no A/B/C judgement. Unprivileged: exit 77 (SKIP).
 
   - name: link-drop-high-rtt
     script: tests/compat/scenarios/link-drop-high-rtt.sh
@@ -208,3 +200,9 @@ scenarios:
       the survivor keeps delivering. Per tests/KNOWN_BUGS.md (link-drop
       precedent), end-to-end SRT `disconnects` is recorded but is NOT a pass
       gate for the isolation phase. Unprivileged: netem_require exits 77 (SKIP).
+
+excluded:
+  - name: moblink-rust
+    repo: https://github.com/datagutt/moblink-rust
+    reason: "WebSocket-based Moblink relay protocol, not SRTLA — no 0x9200-range constants found in src/; uses JSON serialization and WebSocket transport (src/protocol.rs, src/streamer.rs)"
+    studied_at: "dbf44769144f46541e7f47ed29c4b4b037f50cbd"
