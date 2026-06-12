@@ -200,6 +200,11 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           CHANNEL: ${{ needs.calculate-version.outputs.channel }}
+          # aws-cli >= 2.23 sends CRC32/CRC64NVME integrity checksums on every
+          # request by default; Cloudflare R2 does not implement them and rejects
+          # the call. Restore the pre-2.23 behavior so the cp uploads succeed.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
         run: |
           aws configure set aws_access_key_id "$R2_ACCESS_KEY_ID"
           aws configure set aws_secret_access_key "$R2_SECRET_ACCESS_KEY"
