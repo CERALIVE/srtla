@@ -158,10 +158,12 @@ typedef struct __attribute__((__packed__)) {
 New parameters to add:
 
 ```cpp
-// RTT thresholds (milliseconds)
-inline constexpr uint32_t RTT_THRESHOLD_CRITICAL = 500;  // 500ms
-inline constexpr uint32_t RTT_THRESHOLD_HIGH = 200;      // 200ms
-inline constexpr uint32_t RTT_THRESHOLD_MODERATE = 100;  // 100ms
+// RTT thresholds (milliseconds), graduated so worse RTT reaches worse tiers
+inline constexpr uint32_t RTT_THRESHOLD_MODERATE = 100;  // 100ms  -> +5
+inline constexpr uint32_t RTT_THRESHOLD_HIGH = 200;      // 200ms  -> +10
+inline constexpr uint32_t RTT_THRESHOLD_CRITICAL = 500;  // 500ms  -> +20
+inline constexpr uint32_t RTT_THRESHOLD_SEVERE = 1000;   // 1000ms -> +30
+inline constexpr uint32_t RTT_THRESHOLD_EXTREME = 2000;  // 2000ms -> +40
 
 // Window utilization thresholds
 inline constexpr double WINDOW_UTILIZATION_CONGESTED = 0.95;
@@ -170,8 +172,11 @@ inline constexpr double WINDOW_UTILIZATION_LOW = 0.30;
 // Bitrate comparison tolerance
 inline constexpr double BITRATE_DISCREPANCY_THRESHOLD = 0.20;  // 20%
 
-// RTT variance threshold for jitter detection
-inline constexpr uint32_t RTT_VARIANCE_THRESHOLD = 50;  // 50ms stddev
+// Jitter detection — stddev scored relative to mean RTT (coefficient of
+// variation), not an absolute stddev, so normal cellular jitter on a healthy
+// link is not penalized. Replaces the retired absolute RTT_VARIANCE_THRESHOLD.
+inline constexpr double RTT_JITTER_RATIO_HIGH = 1.0;     // stddev > 1.0*mean -> +5
+inline constexpr double RTT_JITTER_RATIO_SEVERE = 1.5;   // stddev > 1.5*mean -> +10
 ```
 
 ## Risks and Mitigations

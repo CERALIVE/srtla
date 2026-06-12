@@ -34,6 +34,12 @@ public:
     time_t recovery_start() const { return recovery_start_; }
     void set_recovery_start(time_t ts) { recovery_start_ = ts; }
 
+    // Wall-clock second of the last outbound keepalive the reaper sent on this
+    // link. Lets cleanup_inactive pace recovery keepalives at KEEPALIVE_PERIOD
+    // independently of the CLEANUP_PERIOD reaping throttle (Task 9 fix).
+    time_t last_keepalive_sent() const { return last_keepalive_sent_; }
+    void set_last_keepalive_sent(time_t ts) { last_keepalive_sent_ = ts; }
+
     time_t connection_start() const { return connection_start_; }
 
     bool extensions_negotiated() const { return extensions_negotiated_; }
@@ -50,6 +56,7 @@ private:
 
     ConnectionStats stats_ {};
     time_t recovery_start_ = 0;
+    time_t last_keepalive_sent_ = 0;
     time_t connection_start_ = 0;
 
     bool extensions_negotiated_ = false;

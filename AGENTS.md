@@ -128,6 +128,7 @@ Compat scenarios under `tests/compat/scenarios/` (run by the harness):
 | `receiver-restart.sh` | Sender re-registers within ~5 s after receiver SIGKILL+restart |
 | `link-drop.sh` | Sender shifts off an isolated link within CONN_TIMEOUT; survivor stays up |
 | `sighup-reload.sh` | New IP joins group on SIGHUP with 0 disconnects; garbage file refused |
+| `jitter-stress.sh` | Two links under 3 escalating live netem jitter phases (no loss) keep streaming with 0 reaps, both links registered, disconnects==0 (needs netem/CAP_NET_ADMIN) |
 
 ## TELEMETRY
 
@@ -179,6 +180,24 @@ Test-infra note: pre-existing receiver tests model **real** streaming groups, so
 their group factories call `mark_data_seen()` (`test_group_limits`,
 `test_timeout_cleanup`); the ghost/eviction behavior itself is pinned by
 `test_ghost_group_eviction.cpp`.
+
+## RECEIVER QUALITY TUNING (RTT / jitter)
+
+The receiver's RTT/jitter scoring (`src/quality/quality_evaluator.cpp`,
+constants in `src/receiver_config.h`) was retuned to remove three latency-path
+defects pinned by `tests/test_quality_rtt.cpp` and one recovery-cadence defect
+pinned by `tests/test_timeout_boundaries.cpp`. The load-balancer weight mapping
+(`error_points → weight_percent`) is unchanged; only the error-point inputs and
+the keepalive cadence changed.
+
+| Constant / behavior | Old | New | Why |
+|---------------------|-----|-----|-----|
+| RTT base penalty ceiling | `> RTT_THRESHOLD_CRITICAL (500ms) → +20` (saturated) | `> CRITICAL → +20`, `> RTT_THRESHOLD_SEVERE (1000ms) → +30`, `> RTT_THRESHOLD_EXTREME (2000ms) → +40` | The old scale capped at +20, so any RTT over 500ms saturated at `WEIGHT_FAIR`; multi-second RTT could never reach `WEIGHT_POOR`/`WEIGHT_CRITICAL`. The SEVERE/EXTREME tiers make the worse weight tiers reachable from RTT alone. Steady 0/150/250/600ms still map FULL/EXCELLENT/DEGRADED/FAIR (unchanged); 2000ms now reaches POOR. |
+| Jitter penalty | flat `+10` when `stddev > RTT_VARIANCE_THRESHOLD (50ms)` (absolute, binary) | `+5` when `stddev > RTT_JITTER_RATIO_HIGH (1.0) × mean`, `+10` when `stddev > RTT_JITTER_RATIO_SEVERE (1.5) × mean` (relative, proportional) | 50ms absolute stddev is normal cellular jitter on a healthy ~150ms link, yet the flat +10 dropped such links a full tier (EXCELLENT→FAIR) and oscillated tiers across statistically-identical jitter batches. Scoring jitter as a fraction of the mean RTT leaves normal jitter penalty-free and only charges links whose jitter rivals (>1.0×) or exceeds (>1.5×) their own latency. `RTT_VARIANCE_THRESHOLD` is retired. |
+| Recovery / NAT keepalive cadence | fired only from `ConnectionRegistry::cleanup_inactive`'s reaping body, throttled to `CLEANUP_PERIOD (3s)` | fired from a decoupled pass on every `cleanup_inactive` call, paced to `KEEPALIVE_PERIOD (1s)` via a new per-connection `last_keepalive_sent` stamp | A 5s `RECOVERY_CHANCE_PERIOD` window only delivered ~2 of the intended ~5 probes because the keepalive rode the 3s reaping throttle. Decoupling restores the documented 1s recovery cadence; the per-connection stamp prevents keepalive spam when the main loop polls `cleanup_inactive` many times in the same second. The reaping throttle itself is unchanged. |
+
+No protocol/wire change, no config knob added beyond the constants above, and
+the `ENABLE_ALGO_COMPARISON` legacy path / `legacy_weight_percent` are untouched.
 
 ## ANTI-PATTERNS
 

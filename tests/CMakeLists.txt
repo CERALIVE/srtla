@@ -86,6 +86,35 @@ gtest_discover_tests(test_ghost_group_eviction TEST_PREFIX "ghost_group.")
 srtla_add_test(test_timeout_cleanup test_timeout_cleanup.cpp)
 target_link_libraries(test_timeout_cleanup PRIVATE receiver_core_obj common_obj)
 
+# Millisecond-resolution fake clock (PR2 infra for the latency suites, Tasks 8/9):
+# proves QualityEvaluator's injected MsClock drives the bandwidth/eval window at
+# 1ms / 50ms / 999ms resolution and that the default ctor keeps the production
+# get_ms path. Inline registration with a "fake_clock." TEST_PREFIX so
+# `ctest -R fake_clock` selects exactly this suite. Links like test_timeout_cleanup.
+add_executable(test_fake_clock test_fake_clock.cpp)
+target_link_libraries(test_fake_clock
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_fake_clock PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_fake_clock PRIVATE cxx_std_17)
+target_compile_options(test_fake_clock PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_fake_clock TEST_PREFIX "fake_clock.")
+
+# Timeout boundary contracts under high-RTT / jitter (PR2, Task 9): receiver
+# reaper (CONN_TIMEOUT boundary, keepalive-jitter survival, recovery-window
+# throttle defect) via cleanup_inactive()'s injected clock, and the sender
+# watchdog (boundary, benign-jitter survival, false-down defect, dead-link
+# detection) via the pure conn_is_timed_out() predicate — no real sleeps. Two
+# cases are RED (document defects fixed in Tasks 14/15). Inline registration
+# with a "timeout_boundaries." TEST_PREFIX so `ctest -R timeout_boundaries`
+# selects exactly this suite. Links like test_timeout_cleanup.
+add_executable(test_timeout_boundaries test_timeout_boundaries.cpp)
+target_link_libraries(test_timeout_boundaries
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_timeout_boundaries PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_timeout_boundaries PRIVATE cxx_std_17)
+target_compile_options(test_timeout_boundaries PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_timeout_boundaries TEST_PREFIX "timeout_boundaries.")
+
 # Service-primitive identity hooks (Task 16): GroupIdentity snapshot + register/
 # teardown extension points fire at the right lifecycle moments with correct
 # data; the default (no-hook) path stays byte-identical and the stream-id
@@ -136,3 +165,19 @@ target_include_directories(test_auth_rate_limiter PRIVATE ${CMAKE_SOURCE_DIR}/sr
 target_compile_features(test_auth_rate_limiter PRIVATE cxx_std_17)
 target_compile_options(test_auth_rate_limiter PRIVATE -Wall -Wextra)
 gtest_discover_tests(test_auth_rate_limiter TEST_PREFIX "auth_rate_limiter.")
+
+# RTT / jitter weight-transition suite (Task 8): drives QualityEvaluator's RTT
+# error-point path under the Task 2 injected ms clock (no real waits) and reads
+# the resulting weight_percent through LoadBalancer. GREEN cases pin the current
+# steady-RTT tier mapping and spike recovery; RED cases document latency-scoring
+# defects (jitter over-penalty, RTT_HISTORY_SIZE=5 oscillation, RTT-penalty
+# saturation) tracked for Task 15. Inline registration with a "quality_rtt."
+# TEST_PREFIX so `ctest -R quality_rtt` selects exactly this suite. Links like
+# test_load_balancer (receiver_core_obj + common_obj).
+add_executable(test_quality_rtt test_quality_rtt.cpp)
+target_link_libraries(test_quality_rtt
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_quality_rtt PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_quality_rtt PRIVATE cxx_std_17)
+target_compile_options(test_quality_rtt PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_quality_rtt TEST_PREFIX "quality_rtt.")

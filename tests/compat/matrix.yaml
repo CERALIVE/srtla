@@ -123,6 +123,84 @@ pairs:
     receiver: go-irl
     tier: informational
 
+# End-to-end behavioral scenarios under tests/compat/scenarios/. These are
+# standalone scripts (NOT sender/receiver interop pairs): each drives our own
+# srtla_send/srtla_rec through a specific failure or stress condition and decides
+# its own PASS/FAIL. `requires` names the host capability the script gates on and
+# SKIPs cleanly without (exit code in `skip_exit`); `gated_on_disconnects` records
+# whether end-to-end SRT `disconnects == 0` is a pass gate (true only when the
+# scenario tears down no link — see each script's header).
+scenarios:
+  - name: receiver-restart
+    script: tests/compat/scenarios/receiver-restart.sh
+    requires: none
+    skip_exit: 3
+    gated_on_disconnects: false
+    proves: "Sender re-registers within ~5s after receiver SIGKILL+restart."
+
+  - name: link-drop
+    script: tests/compat/scenarios/link-drop.sh
+    requires: iptables
+    skip_exit: 3
+    gated_on_disconnects: false
+    proves: >-
+      Two bonded links; isolating one makes the sender shift off it within
+      CONN_TIMEOUT (survivor stays up) and re-register on restore.
+
+  - name: sighup-reload
+    script: tests/compat/scenarios/sighup-reload.sh
+    requires: none
+    skip_exit: 1
+    gated_on_disconnects: true
+    proves: >-
+      A new IP joins the group on SIGHUP with 0 disconnects (no re-handshake);
+      a garbage IP file is refused without crashing or dropping links.
+
+  - name: jitter-stress
+    script: tests/compat/scenarios/jitter-stress.sh
+    requires: netem        # CAP_NET_ADMIN + ip/tc/ping; gated via netem_require
+    skip_exit: 77          # SKIP-PRIVILEGED, mirrors netem_require / pcap-replay
+    gated_on_disconnects: true
+    proves: >-
+      Two bonded links under three escalating live netem jitter phases
+      (150ms ±50/100/200ms, no loss) keep streaming with strictly-increasing
+      per-phase throughput, ZERO receiver link reaps, both links registered, and
+      disconnects == 0 — jitter alone must never kill a healthy link
+      (stresses RTT_VARIANCE_THRESHOLD=50ms end-to-end).
+
+  - name: reorder-stress
+    script: tests/compat/scenarios/reorder-stress.sh
+    requires: netem        # CAP_NET_ADMIN + ip/tc; gated via netem_require
+    skip_exit: 77          # SKIP-PRIVILEGED, mirrors netem_require / pcap-replay
+    gated_on_disconnects: true
+    proves: >-
+      Cross-link packet reordering — THE core SRTLA stress. Two bonded source
+      IPs ride one tc-netem-shaped veth into a private netns hosting
+      srtla_rec + srt-sink, shaped with asymmetric per-link delay (50ms/150ms,
+      prio+u32 classified per source) plus an explicit `netem reorder 25% 50%
+      delay 20ms` phase on the fast link. Gates: handshake, bytes_received >=
+      5000 and disconnects == 0 over >= 30s, and the reorder phase provably
+      active (non-zero packets through the reorder-configured qdisc). Doubles as
+      the srt-patch A/B/C measurement instrument: SINK_LD_LIBRARY_PATH selects
+      the receiver libsrt build and SINK_EXTRA_ARGS passes srt-sink flags (e.g.
+      --nakreport 0 --lossmaxttl 30); it emits one machine-parseable summary
+      line and makes no A/B/C judgement. Unprivileged: exit 77 (SKIP).
+
+  - name: link-drop-high-rtt
+    script: tests/compat/scenarios/link-drop-high-rtt.sh
+    tier: blocking
+    privileged: true
+    notes: >-
+      Bonded link-drop / shift under 200ms±20ms RTT — netem `delay 200ms 20ms
+      distribution normal` applied to BOTH links via tests/compat/lib/netem.sh.
+      Two srtla_send source IPs ride one tc-netem-shaped veth into a private
+      netns hosting srtla_rec + srt-sink; link1 is isolated mid-stream with
+      iptables. Gates: handshake <=10s under 200ms RTT, bytes_received >= 5000,
+      and the sender shifts off the dead link within SENDER_CONN_TIMEOUT while
+      the survivor keeps delivering. Per tests/KNOWN_BUGS.md (link-drop
+      precedent), end-to-end SRT `disconnects` is recorded but is NOT a pass
+      gate for the isolation phase. Unprivileged: netem_require exits 77 (SKIP).
+
 excluded:
   - name: moblink-rust
     repo: https://github.com/datagutt/moblink-rust

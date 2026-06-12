@@ -121,6 +121,29 @@ void ConnectionRegistry::find_by_address(const struct sockaddr_storage *addr,
 
 void ConnectionRegistry::cleanup_inactive(time_t current_time,
                                           const std::function<void(ConnectionPtr, time_t)> &keepalive_cb) {
+    // Rationale: fixes ReceiverRecoveryWindowStarvedByCleanupThrottle (Task 9).
+    // Recovery/NAT keepalives must probe at KEEPALIVE_PERIOD(1s) cadence, but the
+    // reaping body below self-throttles to CLEANUP_PERIOD(3s); firing keepalives
+    // only from that body delivered ~2 of the intended ~5 probes across a 5s
+    // RECOVERY_CHANCE_PERIOD window. Run the keepalive pass on every call,
+    // decoupled from the reaping throttle. A per-connection last-sent stamp keeps
+    // the true cadence at one per KEEPALIVE_PERIOD even when the main loop polls
+    // cleanup_inactive many times in the same second under load.
+    if (keepalive_cb) {
+        for (auto &group : groups_) {
+            for (auto &conn : group->connections()) {
+                if (conn_timed_out(conn, current_time)) {
+                    continue;
+                }
+                if ((conn->last_received() + KEEPALIVE_PERIOD) < current_time &&
+                    (conn->last_keepalive_sent() + KEEPALIVE_PERIOD) <= current_time) {
+                    keepalive_cb(conn, current_time);
+                    conn->set_last_keepalive_sent(current_time);
+                }
+            }
+        }
+    }
+
     static time_t last_run = 0;
     if ((last_run + CLEANUP_PERIOD) > current_time) {
         return;
@@ -181,9 +204,9 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
                              reason,
                              connections.size());
             } else {
-                  if (keepalive_cb && (conn->last_received() + KEEPALIVE_PERIOD) < current_time) {
-                    keepalive_cb(conn, current_time);
-                }
+                // Keepalives are sent from the decoupled pass at the top of
+                // cleanup_inactive (Task 9 fix), not here, so they keep their
+                // KEEPALIVE_PERIOD cadence instead of the CLEANUP_PERIOD throttle.
                 ++conn_it;
             }
         }

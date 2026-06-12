@@ -49,13 +49,15 @@ struct Options {
   std::string host = "0.0.0.0";
   std::string result_path;
   int latency_ms = 200;
-  int64_t duration_ms = 0; // 0 = run until signalled
+  int64_t duration_ms = 0;
+  int nakreport = -1;
+  int lossmaxttl = -1;
 };
 
 void usage(const char *argv0) {
   std::fprintf(stderr,
                "usage: %s --port P --result FILE [--host H] [--latency MS] "
-               "[--duration SEC]\n",
+               "[--duration SEC] [--nakreport 0|1] [--lossmaxttl N]\n",
                argv0);
 }
 
@@ -89,6 +91,22 @@ bool parse_args(int argc, char **argv, Options &opt) {
       const char *v = need("--duration");
       if (!v) return false;
       opt.duration_ms = static_cast<int64_t>(std::atof(v) * 1000.0);
+    } else if (a == "--nakreport") {
+      const char *v = need("--nakreport");
+      if (!v) return false;
+      opt.nakreport = std::atoi(v);
+      if (opt.nakreport != 0 && opt.nakreport != 1) {
+        std::fprintf(stderr, "srt-sink: --nakreport must be 0 or 1\n");
+        return false;
+      }
+    } else if (a == "--lossmaxttl") {
+      const char *v = need("--lossmaxttl");
+      if (!v) return false;
+      opt.lossmaxttl = std::atoi(v);
+      if (opt.lossmaxttl < 0) {
+        std::fprintf(stderr, "srt-sink: --lossmaxttl must be non-negative\n");
+        return false;
+      }
     } else if (a == "-h" || a == "--help") {
       usage(argv[0]);
       std::exit(0);
@@ -176,6 +194,14 @@ int main(int argc, char **argv) {
   srt_setsockflag(listener, SRTO_RCVSYN, &no, sizeof(no)); // non-blocking accept
   srt_setsockflag(listener, SRTO_RCVLATENCY, &opt.latency_ms, sizeof(opt.latency_ms));
 
+  // Apply optional libsrt evaluation flags
+  if (opt.nakreport >= 0) {
+    srt_setsockflag(listener, SRTO_NAKREPORT, &opt.nakreport, sizeof(opt.nakreport));
+  }
+  if (opt.lossmaxttl >= 0) {
+    srt_setsockflag(listener, SRTO_LOSSMAXTTL, &opt.lossmaxttl, sizeof(opt.lossmaxttl));
+  }
+
   struct sockaddr_in sa {};
   sa.sin_family = AF_INET;
   sa.sin_port = htons(static_cast<uint16_t>(opt.port));
@@ -208,6 +234,15 @@ int main(int argc, char **argv) {
   int ev_in = SRT_EPOLL_IN | SRT_EPOLL_ERR;
   srt_epoll_add_usock(eid, listener, &ev_in);
 
+  // Print startup banner with libsrt version and effective option values
+  uint32_t srt_version = srt_getversion();
+  uint32_t major = (srt_version >> 24) & 0xFF;
+  uint32_t minor = (srt_version >> 16) & 0xFF;
+  uint32_t patch = (srt_version >> 8) & 0xFF;
+  std::fprintf(stderr, "srt-sink: libsrt version %u.%u.%u\n", major, minor, patch);
+  std::fprintf(stderr, "srt-sink: nakreport=%s lossmaxttl=%s\n",
+               opt.nakreport < 0 ? "default" : (opt.nakreport ? "on" : "off"),
+               opt.lossmaxttl < 0 ? "default" : std::to_string(opt.lossmaxttl).c_str());
   std::fprintf(stderr, "srt-sink: listening on %s:%d (latency %dms)\n",
                opt.host.c_str(), opt.port, opt.latency_ms);
 

@@ -27,6 +27,9 @@ build-native/
 # Compat harness run artifacts (per-pair result.json + logs)
 tests/compat/results/
 
+# Repo-local test artifacts (libsrt build matrix, generated evidence)
+test-results/
+
 # Python bytecode (compat harness pcap-replay scripts)
 __pycache__/
 *.pyc

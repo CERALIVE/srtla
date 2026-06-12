@@ -105,12 +105,28 @@ driving test (no fix without a test).
   links. Driven by `test_sender_bootstrap.cpp` (unit) and the
   `sighup-reload.sh` invalid-reload phase (end-to-end).
 
+- **Receiver-matched silence timeout (sender false-down fix).**
+  `SENDER_CONN_TIMEOUT` was 4 s — 3.75x tighter than the receiver's
+  `CONN_TIMEOUT` (15 s). For any inbound gap in (4 s, 15 s) the receiver still
+  held the link and kept echoing keepalives while the sender declared it dead
+  and forced a re-register + window reset to `WINDOW_MIN` — the "server in
+  another country" false link-down on a jittery-but-alive high-RTT uplink. It is
+  now aligned to the receiver's 15 s window in `src/sender_logic.h`, so the two
+  ends agree on liveness. Dead-link detection latency is **not** sacrificed: a
+  hard send failure disables a link immediately via the timeout-independent
+  sendto-failure path in `handle_srt_data()`, so real link-drops still shift in
+  <1 s (`link-drop.sh` ~457 ms, `link-drop-high-rtt.sh` ~888 ms — both via that
+  path, not the passive timeout). Driven by `test_timeout_boundaries.cpp`:
+  `SenderFalselyDownsAliveLinkOnSubReceiverTimeoutGap` flips red→green while
+  `SenderDeadLinkDetectedWithinFourToFiveSeconds` stays green.
+
 ### New harness scenarios (`tests/compat/scenarios/`)
 
 | Scenario | Proves |
 |----------|--------|
 | `link-drop.sh` | Two bonded loopback links; isolating one with iptables makes the sender shift off it within `CONN_TIMEOUT` (survivor stays up) and re-register it on restore. SKIPs cleanly without iptables/sudo. |
 | `sighup-reload.sh` | Appending a source IP + SIGHUP joins the new link to the existing group with 0 disconnects (no re-handshake); a garbage file + SIGHUP is refused without crashing or dropping links. |
+| `jitter-stress.sh` | Two bonded links under three escalating live `netem` jitter phases (`150ms ±50/100/200ms`, no loss) keep streaming with strictly-increasing per-phase throughput, ZERO receiver link reaps, both links registered, and `disconnects == 0` — proving jitter alone never reaps a healthy link (stresses `RTT_VARIANCE_THRESHOLD=50ms`). SKIPs cleanly (exit 77) without `CAP_NET_ADMIN`+`ip`/`tc`/`ping`. |
 
 > The `link-drop.sh` verdict gates on the **sender's** deterministic behavior
 > (shift + survivor-up + recovery + media delivered). End-to-end SRT
@@ -118,8 +134,9 @@ driving test (no fix without a test).
 > dual-direction link kill without an SRT break is an SRT app-layer property
 > (the caller's send window stalls on the in-flight packets lost with the link,
 > against ffmpeg's fixed ~5 s peer-idle timeout), orthogonal to bonding
-> correctness. `sighup-reload.sh` kills no link, so it **does** assert
-> `disconnects == 0`.
+> correctness. `sighup-reload.sh` and `jitter-stress.sh` kill no link, so they
+> **do** assert `disconnects == 0` (jitter-stress delivers every packet, just
+> late — the multi-second SRT window must ride it through).
 
 ## Sender telemetry (Task 18)
 
