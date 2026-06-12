@@ -180,11 +180,16 @@ jobs:
           gpg --batch --yes -abs -o Release.gpg Release
           gpg --batch --yes --clearsign -o InRelease Release
 
-      - name: Install AWS CLI
+      - name: Ensure AWS CLI
         run: |
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip -q awscliv2.zip
-          sudo ./aws/install
+          # ubuntu-latest ships AWS CLI v2 preinstalled; `aws/install` without
+          # --update aborts on a preexisting install. Only fetch when absent.
+          if ! command -v aws >/dev/null; then
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip -q awscliv2.zip
+            sudo ./aws/install
+          fi
+          aws --version
 
       - name: Upload to R2
         env:
