@@ -66,6 +66,22 @@ target_link_libraries(test_reg_race PRIVATE receiver_core_obj common_obj)
 srtla_add_test(test_group_limits test_group_limits.cpp)
 target_link_libraries(test_group_limits PRIVATE receiver_core_obj common_obj)
 
+# Family 6 (Task 1, RED): ghost-group eviction DoS hardening (upstream 7855012,
+# pre-cherry-pick). Drives the real registration path (handler_harness.h) and the
+# cleanup reaper (injected clock) to assert behavior absent on current main:
+# never-streamed ghosts reaped at PENDING_GROUP_TIMEOUT, oldest-ghost eviction
+# admits a registration under table pressure, and groups that forwarded real SRT
+# data are promoted (neither reaped early nor evicted). RED until the fix lands.
+# Defined inline (like test_registration_handshake) so a "ghost_group." TEST_PREFIX
+# makes `ctest -R ghost_group` select exactly this suite. Links like test_group_limits.
+add_executable(test_ghost_group_eviction test_ghost_group_eviction.cpp)
+target_link_libraries(test_ghost_group_eviction
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_ghost_group_eviction PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_ghost_group_eviction PRIVATE cxx_std_17)
+target_compile_options(test_ghost_group_eviction PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_ghost_group_eviction TEST_PREFIX "ghost_group.")
+
 # Family 3: timeout / cleanup via ConnectionRegistry::cleanup_inactive(ts, cb).
 srtla_add_test(test_timeout_cleanup test_timeout_cleanup.cpp)
 target_link_libraries(test_timeout_cleanup PRIVATE receiver_core_obj common_obj)
