@@ -47,6 +47,7 @@ private:
     // Helper functions for RTT-based quality assessment (Connection Info algorithm)
     uint32_t calculate_rtt_error_points(const ConnectionStats &stats, time_t current_time);
     double calculate_rtt_variance(const ConnectionStats &stats);
+    double calculate_rtt_mean(const ConnectionStats &stats);
     
     // Helper functions for NAK rate analysis (Connection Info algorithm)
     uint32_t calculate_nak_error_points(ConnectionStats &stats, uint64_t packets_diff);

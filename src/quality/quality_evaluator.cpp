@@ -334,8 +334,16 @@ uint32_t QualityEvaluator::calculate_rtt_error_points(const ConnectionStats &sta
     
     uint32_t points = 0;
     
-    // Base RTT penalties
-    if (stats.rtt_ms > RTT_THRESHOLD_CRITICAL) {
+    // Base RTT penalties, graduated past CRITICAL.
+    // Rationale: fixes SevereSteadyRttShouldReachPoorOrWorse (Task 8). The old
+    // scale stopped at +20 for any RTT over CRITICAL(500ms), saturating at
+    // WEIGHT_FAIR; the SEVERE/EXTREME tiers let multi-second steady RTT reach
+    // WEIGHT_POOR/CRITICAL.
+    if (stats.rtt_ms > RTT_THRESHOLD_EXTREME) {
+        points += 40;
+    } else if (stats.rtt_ms > RTT_THRESHOLD_SEVERE) {
+        points += 30;
+    } else if (stats.rtt_ms > RTT_THRESHOLD_CRITICAL) {
         points += 20;
     } else if (stats.rtt_ms > RTT_THRESHOLD_HIGH) {
         points += 10;
@@ -343,13 +351,36 @@ uint32_t QualityEvaluator::calculate_rtt_error_points(const ConnectionStats &sta
         points += 5;
     }
     
-    // Jitter penalty
-    double variance = calculate_rtt_variance(stats);
-    if (variance > RTT_VARIANCE_THRESHOLD) {
-        points += 10;
+    // Jitter penalty, scored relative to the mean RTT and proportional.
+    // Rationale: fixes ModerateJitter/HighJitter/ExtremeJitterShouldNotDegradeHealthyLink
+    // and ConstantTrueRttMustNotOscillateAcrossTiers (Task 8). The old flat +10
+    // for any stddev>50ms tier-dropped healthy high-RTT links and oscillated
+    // tiers across statistically-identical jitter batches; a stddev/mean ratio
+    // leaves normal cellular jitter penalty-free and only charges links whose
+    // jitter rivals (>1.0x) or exceeds (>1.5x) their own latency.
+    double mean_rtt = calculate_rtt_mean(stats);
+    if (mean_rtt > 0) {
+        double jitter_ratio = calculate_rtt_variance(stats) / mean_rtt;
+        if (jitter_ratio > RTT_JITTER_RATIO_SEVERE) {
+            points += 10;
+        } else if (jitter_ratio > RTT_JITTER_RATIO_HIGH) {
+            points += 5;
+        }
     }
     
     return points;
+}
+
+double QualityEvaluator::calculate_rtt_mean(const ConnectionStats &stats) {
+    int count = 0;
+    double sum = 0;
+    for (size_t i = 0; i < RTT_HISTORY_SIZE; i++) {
+        if (stats.rtt_history[i] > 0) {
+            sum += stats.rtt_history[i];
+            count++;
+        }
+    }
+    return count > 0 ? sum / count : 0.0;
 }
 
 uint32_t QualityEvaluator::calculate_nak_error_points(ConnectionStats &stats, uint64_t packets_diff) {

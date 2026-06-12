@@ -52,11 +52,23 @@ inline constexpr int WEIGHT_FAIR = 55;
 inline constexpr int WEIGHT_POOR = 40;
 inline constexpr int WEIGHT_CRITICAL = 10;
 
-// RTT-based quality assessment thresholds (milliseconds)
-inline constexpr uint32_t RTT_THRESHOLD_CRITICAL = 500; // 500ms
-inline constexpr uint32_t RTT_THRESHOLD_HIGH = 200;     // 200ms
-inline constexpr uint32_t RTT_THRESHOLD_MODERATE = 100; // 100ms
-inline constexpr uint32_t RTT_VARIANCE_THRESHOLD = 50;  // 50ms stddev
+// RTT-based quality assessment thresholds (milliseconds). Graduated so that
+// progressively worse steady RTT reaches progressively worse weight tiers; the
+// top EXTREME tier makes WEIGHT_CRITICAL reachable from RTT alone. The previous
+// scale stopped at RTT_THRESHOLD_CRITICAL/+20 and saturated at WEIGHT_FAIR, so
+// even multi-second RTT never dropped below FAIR (see AGENTS.md tuning table).
+inline constexpr uint32_t RTT_THRESHOLD_MODERATE = 100; // 100ms  -> +5
+inline constexpr uint32_t RTT_THRESHOLD_HIGH = 200;     // 200ms  -> +10
+inline constexpr uint32_t RTT_THRESHOLD_CRITICAL = 500; // 500ms  -> +20
+inline constexpr uint32_t RTT_THRESHOLD_SEVERE = 1000;  // 1000ms -> +30
+inline constexpr uint32_t RTT_THRESHOLD_EXTREME = 2000; // 2000ms -> +40
+// Jitter is scored relative to the mean RTT (coefficient of variation), not as
+// an absolute stddev. Normal cellular jitter is a moderate fraction of a healthy
+// mean RTT and must not tier-drop a healthy link; only jitter that rivals or
+// exceeds the link's own latency is penalized. Replaces the absolute flat
+// RTT_VARIANCE_THRESHOLD=50ms penalty (see AGENTS.md tuning table).
+inline constexpr double RTT_JITTER_RATIO_HIGH = 1.0;    // stddev >  1.0*mean -> +5
+inline constexpr double RTT_JITTER_RATIO_SEVERE = 1.5;  // stddev >  1.5*mean -> +10
 inline constexpr int KEEPALIVE_STALENESS_THRESHOLD = 2;    // seconds
 inline constexpr std::size_t RTT_HISTORY_SIZE = 5;
 
