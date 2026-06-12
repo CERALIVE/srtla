@@ -111,6 +111,7 @@ driving test (no fix without a test).
 |----------|--------|
 | `link-drop.sh` | Two bonded loopback links; isolating one with iptables makes the sender shift off it within `CONN_TIMEOUT` (survivor stays up) and re-register it on restore. SKIPs cleanly without iptables/sudo. |
 | `sighup-reload.sh` | Appending a source IP + SIGHUP joins the new link to the existing group with 0 disconnects (no re-handshake); a garbage file + SIGHUP is refused without crashing or dropping links. |
+| `jitter-stress.sh` | Two bonded links under three escalating live `netem` jitter phases (`150ms ±50/100/200ms`, no loss) keep streaming with strictly-increasing per-phase throughput, ZERO receiver link reaps, both links registered, and `disconnects == 0` — proving jitter alone never reaps a healthy link (stresses `RTT_VARIANCE_THRESHOLD=50ms`). SKIPs cleanly (exit 77) without `CAP_NET_ADMIN`+`ip`/`tc`/`ping`. |
 
 > The `link-drop.sh` verdict gates on the **sender's** deterministic behavior
 > (shift + survivor-up + recovery + media delivered). End-to-end SRT
@@ -118,8 +119,9 @@ driving test (no fix without a test).
 > dual-direction link kill without an SRT break is an SRT app-layer property
 > (the caller's send window stalls on the in-flight packets lost with the link,
 > against ffmpeg's fixed ~5 s peer-idle timeout), orthogonal to bonding
-> correctness. `sighup-reload.sh` kills no link, so it **does** assert
-> `disconnects == 0`.
+> correctness. `sighup-reload.sh` and `jitter-stress.sh` kill no link, so they
+> **do** assert `disconnects == 0` (jitter-stress delivers every packet, just
+> late — the multi-second SRT window must ride it through).
 
 ## Sender telemetry (Task 18)
 

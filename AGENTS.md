@@ -128,6 +128,7 @@ Compat scenarios under `tests/compat/scenarios/` (run by the harness):
 | `receiver-restart.sh` | Sender re-registers within ~5 s after receiver SIGKILL+restart |
 | `link-drop.sh` | Sender shifts off an isolated link within CONN_TIMEOUT; survivor stays up |
 | `sighup-reload.sh` | New IP joins group on SIGHUP with 0 disconnects; garbage file refused |
+| `jitter-stress.sh` | Two links under 3 escalating live netem jitter phases (no loss) keep streaming with 0 reaps, both links registered, disconnects==0 (needs netem/CAP_NET_ADMIN) |
 
 ## TELEMETRY
 
