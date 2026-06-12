@@ -185,7 +185,13 @@ The matrix in `tests/compat/matrix.yaml` locks the following:
 
 ---
 
-## 5. ENABLE_ALGO_COMPARISON Decision
+## 5. srt-patch Necessity
+
+The CeraLive stack uses two patched libsrt forks (CERALIVE/srt for the device image; irlserver/srt `belabox` branch for `irl-srt-server`). ADR-002 documents the empirical A/B/C evaluation that determined which patch behaviors are necessary, which are replaceable by standard SRT options, and the ordered steps to remove the dependency. See [`docs/adr/ADR-002-srt-patch-necessity.md`](adr/ADR-002-srt-patch-necessity.md).
+
+---
+
+## 6. ENABLE_ALGO_COMPARISON Decision
 
 `ENABLE_ALGO_COMPARISON` is defined in `src/receiver_config.h` with a default of `1`:
 
@@ -206,7 +212,7 @@ Changing this default requires a deliberate ADR, not a drive-by edit.
 
 ---
 
-## 6. Maintenance Policy
+## 7. Maintenance Policy
 
 ### Pin refresh
 When a Tier 1 or Tier 2 implementation cuts a new release, update the pin in
