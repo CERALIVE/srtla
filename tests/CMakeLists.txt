@@ -165,3 +165,19 @@ target_include_directories(test_auth_rate_limiter PRIVATE ${CMAKE_SOURCE_DIR}/sr
 target_compile_features(test_auth_rate_limiter PRIVATE cxx_std_17)
 target_compile_options(test_auth_rate_limiter PRIVATE -Wall -Wextra)
 gtest_discover_tests(test_auth_rate_limiter TEST_PREFIX "auth_rate_limiter.")
+
+# RTT / jitter weight-transition suite (Task 8): drives QualityEvaluator's RTT
+# error-point path under the Task 2 injected ms clock (no real waits) and reads
+# the resulting weight_percent through LoadBalancer. GREEN cases pin the current
+# steady-RTT tier mapping and spike recovery; RED cases document latency-scoring
+# defects (jitter over-penalty, RTT_HISTORY_SIZE=5 oscillation, RTT-penalty
+# saturation) tracked for Task 15. Inline registration with a "quality_rtt."
+# TEST_PREFIX so `ctest -R quality_rtt` selects exactly this suite. Links like
+# test_load_balancer (receiver_core_obj + common_obj).
+add_executable(test_quality_rtt test_quality_rtt.cpp)
+target_link_libraries(test_quality_rtt
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_quality_rtt PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_quality_rtt PRIVATE cxx_std_17)
+target_compile_options(test_quality_rtt PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_quality_rtt TEST_PREFIX "quality_rtt.")
