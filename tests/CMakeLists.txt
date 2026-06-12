@@ -123,3 +123,16 @@ find_package(Threads REQUIRED)
 target_link_libraries(test_telemetry_emit PRIVATE Threads::Threads)
 target_compile_definitions(test_telemetry_emit PRIVATE
   TELEMETRY_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+
+# Per-IP SRT auth-failure throttle (upstream 39e324a) + is_srt_shutdown classifier.
+# Pure time-as-parameter logic: no clock injection, no real waits. Links
+# receiver_core_obj (AuthRateLimiter) and common_obj (is_srt_shutdown).
+# Inline registration with a "auth_rate_limiter." TEST_PREFIX so
+# `ctest -R auth_rate_limiter` selects exactly this suite (ghost_group idiom).
+add_executable(test_auth_rate_limiter test_auth_rate_limiter.cpp)
+target_link_libraries(test_auth_rate_limiter
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_auth_rate_limiter PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_auth_rate_limiter PRIVATE cxx_std_17)
+target_compile_options(test_auth_rate_limiter PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_auth_rate_limiter TEST_PREFIX "auth_rate_limiter.")

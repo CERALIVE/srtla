@@ -24,6 +24,10 @@ public:
     // Drops stale entries; call periodically from the cleanup loop.
     void cleanup(time_t now);
 
+    // Tracked-IP count: read-only observability for the cleanup reclamation
+    // path (no other live counter is exposed); does not affect throttling.
+    std::size_t tracked_entry_count() const { return entries_.size(); }
+
 private:
     struct Entry {
         int failures = 0;
