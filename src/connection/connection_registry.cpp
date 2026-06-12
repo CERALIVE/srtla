@@ -66,6 +66,27 @@ void ConnectionRegistry::remove_group(const ConnectionGroupPtr &group) {
     groups_.erase(it);
 }
 
+bool ConnectionRegistry::evict_oldest_pending_group() {
+    ConnectionGroupPtr oldest;
+    for (auto &group : groups_) {
+        if (!group->connections().empty() || group->has_seen_data()) {
+            continue;
+        }
+        if (!oldest || group->created_at() < oldest->created_at()) {
+            oldest = group;
+        }
+    }
+
+    if (!oldest) {
+        return false;
+    }
+
+    spdlog::warn("[Group: {}] Evicting pending group to admit new registration (group table full)",
+                 static_cast<void *>(oldest.get()));
+    remove_group(oldest);
+    return true;
+}
+
 ConnectionGroupPtr ConnectionRegistry::find_group_by_id(const char *id) {
     for (auto &group : groups_) {
         if (NetworkUtils::constant_time_compare(group->id().data(), id, SRTLA_ID_LEN) == 0) {
@@ -167,7 +188,8 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
             }
         }
 
-        if (connections.empty() && (group->created_at() + GROUP_TIMEOUT) < current_time) {
+        time_t empty_timeout = group->has_seen_data() ? GROUP_TIMEOUT : PENDING_GROUP_TIMEOUT;
+        if (connections.empty() && (group->created_at() + empty_timeout) < current_time) {
             if (on_group_reaped) {
                 on_group_reaped(group->identity());
             }

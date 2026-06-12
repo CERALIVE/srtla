@@ -51,11 +51,13 @@ inline bool is_duplicate_nak(ConnectionGroupPtr group, const char *buffer, int l
 SRTLAHandler::SRTLAHandler(int srtla_socket,
                            connection::ConnectionRegistry &registry,
                            SRTHandler &srt_handler,
-                           quality::MetricsCollector &metrics_collector)
+                           quality::MetricsCollector &metrics_collector,
+                           utils::AuthRateLimiter &rate_limiter)
     : srtla_socket_(srtla_socket),
       registry_(registry),
       srt_handler_(srt_handler),
-      metrics_(metrics_collector) {}
+      metrics_(metrics_collector),
+      rate_limiter_(rate_limiter) {}
 
 int SRTLAHandler::process_packets(time_t ts) {
     // Pre-allocate buffers for batch receive
@@ -137,6 +139,9 @@ void SRTLAHandler::process_single_packet(const char *buf, int n,
         return;
     }
 
+    // Real SRT traffic: promote the group out of "pending" so it is no longer
+    // subject to aggressive ghost-group reaping or eviction under a REG1 flood.
+    group->mark_data_seen();
     group->set_last_address(*srtla_addr);
     metrics_.on_packet_received(conn, static_cast<size_t>(n));
 
@@ -190,7 +195,25 @@ void SRTLAHandler::send_keepalive(const ConnectionPtr &conn, time_t ts) {
 }
 
 int SRTLAHandler::register_group(const struct sockaddr_storage *addr, const char *buffer, time_t ts) {
-    if (registry_.groups().size() >= MAX_GROUPS) {
+    // Refuse registrations from a source IP that recently failed SRT auth
+    // repeatedly. Blunts a client brute forcing streamid/passphrase and stops
+    // it from churning ghost groups, without affecting honest broadcasters.
+    if (rate_limiter_.is_blocked(*addr, ts)) {
+        uint16_t header = htobe16(SRTLA_TYPE_REG_ERR);
+        pad_sendto(srtla_socket_, &header, sizeof(header), 0,
+               reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
+        spdlog::warn("[{}:{}] Group registration refused: source throttled for repeated auth failures",
+                     print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
+                     port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))));
+        return -1;
+    }
+
+    // When the group table is full, try to reclaim a slot from a ghost group
+    // (registered but never streamed) before rejecting. This keeps an
+    // unauthenticated REG1 flood from locking out the real broadcaster: its
+    // REG1 evicts the oldest ghost, and once it completes REG2 and starts
+    // streaming the group is marked as having data and is no longer evictable.
+    if (registry_.groups().size() >= MAX_GROUPS && !registry_.evict_oldest_pending_group()) {
         uint16_t header = htobe16(SRTLA_TYPE_REG_ERR);
         pad_sendto(srtla_socket_, &header, sizeof(header), 0,
                reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);

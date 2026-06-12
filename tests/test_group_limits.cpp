@@ -52,11 +52,16 @@ namespace {
 
 constexpr time_t kTs = 200000;
 
-// A bare group with a unique id, no connections, no SRT socket — just enough to
-// occupy a registry slot for the size guard.
+// Filler for the MAX_GROUPS guard. mark_data_seen() is load-bearing: post-7855012
+// an empty group without data is an evictable ghost (reaped at PENDING_GROUP_TIMEOUT),
+// so an unmarked filler would be evicted by the (MAX_GROUPS+1)-th REG1 instead of
+// triggering REG_ERR. Marking it models the realistic "table full of real streams"
+// state; the ghost-eviction path is covered by test_ghost_group_eviction.cpp.
 ConnectionGroupPtr make_mock_group(uint32_t seed) {
     auto id = make_client_id(seed);
-    return std::make_shared<ConnectionGroup>(reinterpret_cast<const char *>(id.data()), kTs);
+    auto group = std::make_shared<ConnectionGroup>(reinterpret_cast<const char *>(id.data()), kTs);
+    group->mark_data_seen();
+    return group;
 }
 
 void fill_registry(HandlerHarness &h, int count) {

@@ -153,8 +153,8 @@ protected:
         in->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         in->sin_port = htons(9999);
 
-        srt_handler_ = std::make_unique<SRTHandler>(srtla_fd_, srt_addr_, epoll_fd_, registry_);
-        handler_ = std::make_unique<SRTLAHandler>(srtla_fd_, registry_, *srt_handler_, metrics_);
+        srt_handler_ = std::make_unique<SRTHandler>(srtla_fd_, srt_addr_, epoll_fd_, registry_, rate_limiter_);
+        handler_ = std::make_unique<SRTLAHandler>(srtla_fd_, registry_, *srt_handler_, metrics_, rate_limiter_);
     }
 
     void TearDown() override {
@@ -202,6 +202,7 @@ protected:
     struct sockaddr_storage srt_addr_ {};
     ConnectionRegistry registry_;
     MetricsCollector metrics_;
+    srtla::utils::AuthRateLimiter rate_limiter_;
     std::unique_ptr<SRTHandler> srt_handler_;
     std::unique_ptr<SRTLAHandler> handler_;
     std::vector<int> client_fds_;

@@ -66,6 +66,22 @@ target_link_libraries(test_reg_race PRIVATE receiver_core_obj common_obj)
 srtla_add_test(test_group_limits test_group_limits.cpp)
 target_link_libraries(test_group_limits PRIVATE receiver_core_obj common_obj)
 
+# Family 6 (Task 1, RED): ghost-group eviction DoS hardening (upstream 7855012,
+# pre-cherry-pick). Drives the real registration path (handler_harness.h) and the
+# cleanup reaper (injected clock) to assert behavior absent on current main:
+# never-streamed ghosts reaped at PENDING_GROUP_TIMEOUT, oldest-ghost eviction
+# admits a registration under table pressure, and groups that forwarded real SRT
+# data are promoted (neither reaped early nor evicted). RED until the fix lands.
+# Defined inline (like test_registration_handshake) so a "ghost_group." TEST_PREFIX
+# makes `ctest -R ghost_group` select exactly this suite. Links like test_group_limits.
+add_executable(test_ghost_group_eviction test_ghost_group_eviction.cpp)
+target_link_libraries(test_ghost_group_eviction
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_ghost_group_eviction PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_ghost_group_eviction PRIVATE cxx_std_17)
+target_compile_options(test_ghost_group_eviction PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_ghost_group_eviction TEST_PREFIX "ghost_group.")
+
 # Family 3: timeout / cleanup via ConnectionRegistry::cleanup_inactive(ts, cb).
 srtla_add_test(test_timeout_cleanup test_timeout_cleanup.cpp)
 target_link_libraries(test_timeout_cleanup PRIVATE receiver_core_obj common_obj)
@@ -107,3 +123,16 @@ find_package(Threads REQUIRED)
 target_link_libraries(test_telemetry_emit PRIVATE Threads::Threads)
 target_compile_definitions(test_telemetry_emit PRIVATE
   TELEMETRY_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+
+# Per-IP SRT auth-failure throttle (upstream 39e324a) + is_srt_shutdown classifier.
+# Pure time-as-parameter logic: no clock injection, no real waits. Links
+# receiver_core_obj (AuthRateLimiter) and common_obj (is_srt_shutdown).
+# Inline registration with a "auth_rate_limiter." TEST_PREFIX so
+# `ctest -R auth_rate_limiter` selects exactly this suite (ghost_group idiom).
+add_executable(test_auth_rate_limiter test_auth_rate_limiter.cpp)
+target_link_libraries(test_auth_rate_limiter
+  PRIVATE GTest::gtest_main receiver_core_obj common_obj)
+target_include_directories(test_auth_rate_limiter PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(test_auth_rate_limiter PRIVATE cxx_std_17)
+target_compile_options(test_auth_rate_limiter PRIVATE -Wall -Wextra)
+gtest_discover_tests(test_auth_rate_limiter TEST_PREFIX "auth_rate_limiter.")
