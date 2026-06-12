@@ -202,10 +202,14 @@ jobs:
           aws configure set aws_access_key_id "$R2_ACCESS_KEY_ID"
           aws configure set aws_secret_access_key "$R2_SECRET_ACCESS_KEY"
 
-          aws s3 sync dist/arm64/ "s3://$R2_BUCKET/dists/$CHANNEL/binary-arm64/" \
-            --endpoint-url "$R2_ENDPOINT"
-          aws s3 sync dist/amd64/ "s3://$R2_BUCKET/dists/$CHANNEL/binary-amd64/" \
-            --endpoint-url "$R2_ENDPOINT"
+          # R2 returns NoSuchKey from ListObjectsV2 for a not-yet-existing
+          # prefix, which breaks `aws s3 sync` on the first upload to a channel.
+          # `cp --recursive` uploads without diffing the destination: it
+          # overwrites the apt metadata and accumulates per-version .debs.
+          aws s3 cp dist/arm64/ "s3://$R2_BUCKET/dists/$CHANNEL/binary-arm64/" \
+            --recursive --endpoint-url "$R2_ENDPOINT"
+          aws s3 cp dist/amd64/ "s3://$R2_BUCKET/dists/$CHANNEL/binary-amd64/" \
+            --recursive --endpoint-url "$R2_ENDPOINT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
