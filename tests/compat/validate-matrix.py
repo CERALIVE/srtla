@@ -6,7 +6,7 @@ Checks:
 - All pins are 40-character hexadecimal strings
 - All pairs reference valid sender/receiver names
 - All required fields are present in entries
-- Blocking tier contains exactly 6 pairs
+- Blocking tier contains exactly 7 pairs
 """
 
 import sys
@@ -171,8 +171,8 @@ def validate_matrix(matrix_path):
                     informational_pairs.append(pair)
 
     # Validate blocking tier count
-    if len(blocking_pairs) != 6:
-        errors.append(f"blocking tier must have exactly 6 pairs, got {len(blocking_pairs)}")
+    if len(blocking_pairs) != 7:
+        errors.append(f"blocking tier must have exactly 7 pairs, got {len(blocking_pairs)}")
 
     # Validate excluded
     if not isinstance(excluded, list):

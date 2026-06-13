@@ -249,7 +249,9 @@ RX_PID=$!; track "$RX_PID"
 wait_for_marker "$RX_LOG" "srtla_rec is now running" 5 || die "receiver never came up"
 
 printf '%s\n%s\n' "$LINK1_SRC" "$LINK2_SRC" > "$IPS_FILE"
-"$SRTLA_SEND" "$LOCAL_SRT_PORT" "$RECV_IP" "$SRTLA_PORT" "$IPS_FILE" \
+# RUST_LOG only affects the Rust fork sender (the C sender logs unconditionally);
+# without it the fork is silent and the both-links-added grep below sees nothing.
+RUST_LOG="${RUST_LOG:-info}" "$SRTLA_SEND" "$LOCAL_SRT_PORT" "$RECV_IP" "$SRTLA_PORT" "$IPS_FILE" \
     --stats-file "$STATS_FILE" >"$TX_LOG" 2>&1 &
 TX_PID=$!; track "$TX_PID"
 sleep 0.6

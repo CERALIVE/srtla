@@ -87,6 +87,10 @@ tests/compat/run-matrix.sh --tier blocking                         # whole tier
   keepalive). Default build is unaffected (option is OFF).
 - "ours" = local build-dir binaries; external impls = `compat/*` Docker images
   from `tests/compat/docker/` (host network, amd64).
+- The `ceralive-srtla-send-rs` pair (the Rust fork, ADR-003) is neither: it runs a
+  **pre-built release binary** resolved via `SRTLA_SEND_RS_BIN` (or a `srtla_send_rs`
+  on PATH). Fetch it from the fork's v1.0.0 release `.deb` (`/usr/bin/srtla_send`);
+  unset → that pair SKIPs like a missing Docker image. It is a **blocking** pair.
 - Per-pair verdicts land in `tests/compat/results/<pair>/result.json` (gitignored).
 - Pass criteria: handshake ≤10s (end-to-end first byte; `HANDSHAKE_MAX_MS`),
   `bytes_received ≥ 1000`, `disconnects == 0`, clean SIGTERM teardown. The harness
@@ -130,6 +134,14 @@ Compat scenarios under `tests/compat/scenarios/` (run by the harness):
 | `link-drop.sh` | Sender shifts off an isolated link within CONN_TIMEOUT; survivor stays up |
 | `sighup-reload.sh` | New IP joins group on SIGHUP with 0 disconnects; garbage file refused |
 | `jitter-stress.sh` | Two links under 3 escalating live netem jitter phases (no loss) keep streaming with 0 reaps, both links registered, disconnects==0 (needs netem/CAP_NET_ADMIN) |
+
+The scenarios are **sender-agnostic**: their behavioral greps match both the C
+`srtla_send` and the Rust fork (different log wording — e.g. C "Added connection
+via IP" vs fork "added uplink … via IP"; C "connection failed" vs fork "timed out;
+attempting full socket reconnection"). The Rust fork is silent unless `RUST_LOG` is
+set, so the sender launch in each scenario prefixes `RUST_LOG="${RUST_LOG:-info}"`
+(a no-op for the C sender, which logs unconditionally). Run a scenario against the
+fork by pointing `--build-dir` at a dir whose `srtla_send` is the fork binary.
 
 ## TELEMETRY
 
