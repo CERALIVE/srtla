@@ -148,12 +148,16 @@ declare -A PAIR_TIER
 PAIR_TIER["belabox-sender:ours"]=blocking
 PAIR_TIER["irlserver-send:ours"]=blocking
 PAIR_TIER["ceralive-send-rs:ours"]=blocking
+PAIR_TIER["ceralive-send-rs:belabox-receiver"]=blocking
+PAIR_TIER["ceralive-send-rs:openirl-receiver"]=blocking
 PAIR_TIER["moblin-mock:ours"]=blocking
 PAIR_TIER["ours:belabox-receiver"]=blocking
 PAIR_TIER["ours:openirl-receiver"]=blocking
 PAIR_TIER["ours:ours"]=blocking
 PAIR_TIER["ours:go-srtla"]=informational
 PAIR_TIER["ours:go-irl"]=informational
+PAIR_TIER["ceralive-send-rs:go-srtla"]=informational
+PAIR_TIER["ceralive-send-rs:go-irl"]=informational
 
 # Map a matrix.yaml sender/receiver name onto a registry token.
 matrix_to_token() {
