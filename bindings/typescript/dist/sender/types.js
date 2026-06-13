@@ -1,4 +1,8 @@
 import { z } from "zod";
+/**
+ * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
+ */
 export const srtlaSendOptionsSchema = z.object({
     listenPort: z.number().int().min(1).max(65535).default(5000),
     srtlaHost: z.string().min(1),

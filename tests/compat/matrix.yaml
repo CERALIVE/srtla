@@ -132,6 +132,25 @@ pairs:
     tier: blocking
     notes: "ADR-003 Rust sender cutover gate — fork srtla_send -> C srtla_rec"
 
+  # ADR-003 Rust sender vs the OTHER ecosystem receivers — wire interop beyond our
+  # own srtla_rec. All basic healthy-stream pairs (scenario=stream, no netem) so
+  # they stay unprivileged (S3: impairment/netem lives only in the privileged job);
+  # tier mirrors the matching `ours -> <receiver>` pair. `skip_if_missing: true`
+  # tracks the harness' existing auto-SKIP when SRTLA_SEND_RS_BIN is unset or the
+  # receiver image is unbuilt — never a hard failure. No standalone irlserver
+  # srtla_rec exists here (irlserver is sender-only); go-irl/go-srtla cover Go.
+  - sender: ceralive-srtla-send-rs
+    receiver: belabox-srtla-rec
+    tier: blocking
+    skip_if_missing: true
+    notes: "Rust fork sender -> oldest-srtla2 BELABOX receiver (backward-compat wire proof)"
+
+  - sender: ceralive-srtla-send-rs
+    receiver: openirl-receiver
+    tier: blocking
+    skip_if_missing: true
+    notes: "Rust fork sender -> OpenIRL srtla_rec (SRTLA-path-only image)"
+
   - sender: moblin-mock
     receiver: ours
     tier: blocking
@@ -156,6 +175,21 @@ pairs:
   - sender: ours
     receiver: go-irl
     tier: informational
+
+  # ADR-003 Rust fork sender vs the Go receivers (see the blocking-tier block
+  # above for the S3 / skip_if_missing rationale). Informational to match the
+  # receivers' own tier and the `ours -> go-*` pairs.
+  - sender: ceralive-srtla-send-rs
+    receiver: go-srtla
+    tier: informational
+    skip_if_missing: true
+    notes: "Rust fork sender -> go-srtla (minimal Go receiver)"
+
+  - sender: ceralive-srtla-send-rs
+    receiver: go-irl
+    tier: informational
+    skip_if_missing: true
+    notes: "Rust fork sender -> go-irl (Go IRL receiver, server mode)"
 
 # End-to-end behavioral scenarios under tests/compat/scenarios/. These are
 # standalone scripts (NOT sender/receiver interop pairs): each drives our own
