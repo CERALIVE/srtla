@@ -116,6 +116,12 @@ SRTLA_REC="${BUILD_DIR}/srtla_rec"
 SRTLA_SEND="${BUILD_DIR}/srtla_send"
 EXT_KA_PROBE="${BUILD_DIR}/tests/compat/ext-ka-probe/ext-ka-probe"
 
+# CERALIVE fork sender (ceralive-srtla-send-rs): a pre-built release binary, not
+# a build-dir binary nor a Docker image. Resolve from SRTLA_SEND_RS_BIN else a
+# `srtla_send_rs` on PATH; empty -> the forkbin pair SKIPs (like a missing image).
+SRTLA_SEND_RS_BIN="${SRTLA_SEND_RS_BIN:-}"
+[[ -z "$SRTLA_SEND_RS_BIN" ]] && SRTLA_SEND_RS_BIN="$(command -v srtla_send_rs 2>/dev/null || true)"
+
 # --------------------------------------------------------------------------- #
 # Token registry: token -> role / kind / docker image / matrix name / marker.  #
 # "ours" is local (build dir); every external impl is a compat/* Docker image. #
@@ -130,6 +136,7 @@ reg() { # token role kind image matrix marker
 reg  ours               both      local   -                          ours                  "Group registered"
 reg  belabox-sender     sender    docker  compat/belabox-sender      belabox-srtla-send    ""
 reg  irlserver-send     sender    docker  compat/irlserver-send      irlserver-srtla-send  ""
+reg  ceralive-send-rs   sender    forkbin -                          ceralive-srtla-send-rs ""
 reg  moblin-mock        sender    docker  compat/moblin-mock         moblin-mock           ""
 reg  belabox-receiver   receiver  docker  compat/belabox-receiver    belabox-srtla-rec     "registered"
 reg  openirl-receiver   receiver  docker  compat/openirl-receiver    openirl-receiver      "Group registered"
@@ -140,6 +147,7 @@ reg  go-irl             receiver  docker  compat/go-irl              go-irl     
 declare -A PAIR_TIER
 PAIR_TIER["belabox-sender:ours"]=blocking
 PAIR_TIER["irlserver-send:ours"]=blocking
+PAIR_TIER["ceralive-send-rs:ours"]=blocking
 PAIR_TIER["moblin-mock:ours"]=blocking
 PAIR_TIER["ours:belabox-receiver"]=blocking
 PAIR_TIER["ours:openirl-receiver"]=blocking
@@ -238,6 +246,14 @@ run_pair() {
     fi
   done
 
+  # The fork sender pair needs the resolved release binary (SRTLA_SEND_RS_BIN).
+  if [[ "${KIND[$sender]}" == "forkbin" && ! -x "$SRTLA_SEND_RS_BIN" ]]; then
+    log "SKIP ${pair}: fork sender binary unresolved (set SRTLA_SEND_RS_BIN)"
+    printf '{"pair":"%s","skipped":true,"reason":"SRTLA_SEND_RS_BIN not set/executable"}\n' \
+      "$pair" > "${outdir}/result.json"
+    return 3
+  fi
+
   local sink_log="${outdir}/sink.log"  sink_json="${outdir}/sink.json"
   local rx_log="${outdir}/receiver.log" tx_log="${outdir}/sender.log"
   local ff_log="${outdir}/ffmpeg.log"  probe_log="${outdir}/probe.log"
@@ -279,9 +295,11 @@ run_pair() {
   # 3) sender — record the moment we start it for handshake timing.
   local t_send_ms; t_send_ms="$(now_ms)"
   local tx_pid="" ff_pid="" tx_cname=""
-  if [[ "${KIND[$sender]}" == "local" ]]; then
+  if [[ "${KIND[$sender]}" == "local" || "${KIND[$sender]}" == "forkbin" ]]; then
+    local send_bin="$SRTLA_SEND"
+    [[ "${KIND[$sender]}" == "forkbin" ]] && send_bin="$SRTLA_SEND_RS_BIN"
     printf '127.0.0.1\n' > "${outdir}/ips.txt"
-    "$SRTLA_SEND" "$LOCAL_SRT_PORT" 127.0.0.1 "$target_srtla_port" \
+    "$send_bin" "$LOCAL_SRT_PORT" 127.0.0.1 "$target_srtla_port" \
                   "${outdir}/ips.txt" >"$tx_log" 2>&1 &
     tx_pid=$!; track_pid "$tx_pid"
     sleep 0.6
@@ -327,7 +345,7 @@ run_pair() {
   local sink_code; kill_pid "$sink_pid"; sink_code=$?
 
   local sender_code receiver_code
-  if [[ "${KIND[$sender]}" == "local" ]]; then
+  if [[ "${KIND[$sender]}" == "local" || "${KIND[$sender]}" == "forkbin" ]]; then
     [[ -n "$ff_pid" ]] && { kill -TERM "$ff_pid" 2>/dev/null; wait "$ff_pid" 2>/dev/null; }
     kill_pid "$tx_pid"; sender_code=$?
   else

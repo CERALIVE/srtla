@@ -133,7 +133,9 @@ sleep 0.5
 RX_PID=$!; track "$RX_PID"
 wait_for_marker "$RX_LOG" "srtla_rec is now running" 5 || die "receiver never came up"
 
-"$SRTLA_SEND" "$LOCAL_SRT_PORT" 127.0.0.1 "$SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
+# RUST_LOG only affects the Rust fork sender (the C sender logs unconditionally);
+# without it the fork is silent and the join/refusal greps below see nothing.
+RUST_LOG="${RUST_LOG:-info}" "$SRTLA_SEND" "$LOCAL_SRT_PORT" 127.0.0.1 "$SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
 TX_PID=$!; track "$TX_PID"
 sleep 0.6
 
@@ -148,7 +150,7 @@ wait_for_marker "$RX_LOG" "Group registered" 10 && handshake=true
 sleep "$PRE_SEC"
 
 # Link 2 must not be present before the reload.
-link2_join_pre=$(count_re "$TX_LOG" "Added connection via ${LINK2_IP}")
+link2_join_pre=$(count_re "$TX_LOG" "(Added connection via|added uplink .* via) ${LINK2_IP}")
 
 # ----------------------------------------------------------------------------- #
 # Phase 2 — VALID reload: append the second source IP + SIGHUP.                   #
@@ -162,7 +164,7 @@ link2_joined=false
 join_ms=-1
 deadline=$(( HUP_T0 + JOIN_DEADLINE_MS ))
 while [[ "$(now_ms)" -lt "$deadline" ]]; do
-  link2_join_now=$(count_re "$TX_LOG" "Added connection via ${LINK2_IP}")
+  link2_join_now=$(count_re "$TX_LOG" "(Added connection via|added uplink .* via) ${LINK2_IP}")
   if [[ "$link2_join_now" -gt "$link2_join_pre" ]]; then
     link2_joined=true
     join_ms=$(( $(now_ms) - HUP_T0 ))
@@ -173,7 +175,7 @@ done
 
 # The new link should also register (establish) within the same window.
 link2_established=false
-wait_for_marker "$TX_LOG" "${LINK2_IP} .*connection established" 4 && link2_established=true
+wait_for_marker "$TX_LOG" "(${LINK2_IP} .*connection established|connection established \(active=2\))" 4 && link2_established=true
 log "    link2_joined=${link2_joined} join_ms=${join_ms} established=${link2_established}"
 
 sleep "$MID_SEC"

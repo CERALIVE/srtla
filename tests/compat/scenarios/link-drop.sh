@@ -183,7 +183,9 @@ printf '%s\n%s\n' "$LINK1_IP" "$LINK2_IP" > "$IPS_FILE"
 RX_PID=$!; track "$RX_PID"
 wait_for_marker "$RX_LOG" "srtla_rec is now running" 5 || die "receiver never came up"
 
-"$SRTLA_SEND" "$LOCAL_SRT_PORT" 127.0.0.1 "$SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
+# RUST_LOG only affects the Rust fork sender (the C sender logs unconditionally);
+# without it the fork is silent and the link-fail/establish greps below see nothing.
+RUST_LOG="${RUST_LOG:-info}" "$SRTLA_SEND" "$LOCAL_SRT_PORT" 127.0.0.1 "$SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
 TX_PID=$!; track "$TX_PID"
 sleep 0.6
 
@@ -222,8 +224,8 @@ log "==> phase 2: isolate link 2 (${LINK2_IP}) for ${DROP_SEC}s"
 
 # Snapshot per-link failure markers BEFORE the drop so we only count NEW ones
 # (the bootstrap handshake can log a transient reconnect at startup).
-link2_failed_pre=$(count_re "$TX_LOG" "${LINK2_IP}.*connection failed")
-link1_failed_pre=$(count_re "$TX_LOG" "${LINK1_IP} .*connection failed")
+link2_failed_pre=$(count_re "$TX_LOG" "(${LINK2_IP}.*connection failed|via ${LINK2_IP}.*timed out; attempting full socket reconnection)")
+link1_failed_pre=$(count_re "$TX_LOG" "(${LINK1_IP} .*connection failed|via ${LINK1_IP}.*timed out; attempting full socket reconnection)")
 
 DROP_T0="$(now_ms)"
 drop_link2
@@ -234,7 +236,7 @@ link2_failed=false
 shift_ms=-1
 deadline=$(( DROP_T0 + SHIFT_DEADLINE_MS ))
 while [[ "$(now_ms)" -lt "$deadline" ]]; do
-  link2_failed_now=$(count_re "$TX_LOG" "${LINK2_IP}.*connection failed")
+  link2_failed_now=$(count_re "$TX_LOG" "(${LINK2_IP}.*connection failed|via ${LINK2_IP}.*timed out; attempting full socket reconnection)")
   if [[ "$link2_failed_now" -gt "$link2_failed_pre" ]]; then
     link2_failed=true
     shift_ms=$(( $(now_ms) - DROP_T0 ))
@@ -251,7 +253,7 @@ remain=$(( DROP_SEC * 1000 - elapsed ))
 
 # The survivor (link 1) must NOT have failed across the whole drop window — the
 # sender kept it up and shifted traffic onto it while only link 2 went down.
-link1_failed_now=$(count_re "$TX_LOG" "${LINK1_IP} .*connection failed")
+link1_failed_now=$(count_re "$TX_LOG" "(${LINK1_IP} .*connection failed|via ${LINK1_IP}.*timed out; attempting full socket reconnection)")
 survivor_stayed_up=false
 [[ "$link1_failed_now" -le "$link1_failed_pre" ]] && survivor_stayed_up=true
 

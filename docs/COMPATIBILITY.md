@@ -18,6 +18,7 @@ For protocol internals and the handshake flow, see [`HOW_IT_WORKS.md`](HOW_IT_WO
 | BELABOX/srtla | C | sender + receiver | `6f3925e` (oldest srtla2) | 1 — reference |
 | irlserver/srtla | C++ | receiver | `main` (no tags) | 1 — upstream base |
 | irlserver/srtla_send | Rust | sender | `v3.0.0` | 1 — extended-KA sender |
+| CERALIVE/srtla-send-rs | Rust | sender | `v1.0.0` (`b867c7d`) | 1 — fork; ADR-003 cutover sender |
 | eerimoq/moblin | Swift | sender (iOS) | `ios-33.8.0-90` | 1 — real-world client |
 | e04/go-irl | Go | receiver + UI | `main` (no tags) | 2 — Go receiver |
 | e04/go-srtla | Go | receiver | `main` (no tags) | 2 — Go receiver (minimal) |

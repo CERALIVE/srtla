@@ -28,6 +28,35 @@ senders:
     tier: blocking
     notes: "irlserver Rust sender; tag v3.0.0"
 
+  - name: ceralive-srtla-send-rs
+    repo: https://github.com/CERALIVE/srtla-send-rs
+    pin: b867c7daa3bd1192bdf762f55e6f0c99ceb66763
+    role: sender
+    # Deliberately no `build:` key — this pair runs a pre-built release binary,
+    # not a docker-built source pin; gen-ci-matrix.sh --images skips it by design.
+    release: v1.0.0
+    fetch: release-deb
+    env_override: SRTLA_SEND_RS_BIN
+    artifacts:
+      amd64:
+        file: srtla-send-rs_3.0.0_amd64.deb
+        sha256: 803f0ed4a8964d813a78e16cf2a1b84027fea6efc0273690b2cfa6a60a457dc5
+      arm64:
+        file: srtla-send-rs_3.0.0_arm64.deb
+        sha256: 305f117539cf170ecf52cfef303e39de0c5c44c2e0933803636f7d5cfd27352f
+    tier: blocking
+    notes: >-
+      CERALIVE fork of the irlserver Rust srtla_send, adopted as the shipping
+      sender via direct cutover (ADR-003). Pinned to the v1.0.0 release tag
+      (commit b867c7d); the .deb package Version is 3.0.0, inherited from the
+      upstream Cargo.toml, so pin by SHA/commit, not version. Fetch with:
+        gh release download v1.0.0 -R CERALIVE/srtla-send-rs --pattern "*<arch>*.deb"
+      verify the SHA256 above, then `dpkg-deb -x` (or `ar` + `tar --zstd`) to
+      obtain /usr/bin/srtla_send. The CLI is positional-compatible with the C
+      sender (SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT IPS_FILE). The receiver
+      stays the C srtla_rec (ADR-002) — this pair is the ADR-003 sender cutover
+      gate. See docs/adr/ADR-003-rust-sender-adoption.md.
+
   - name: moblin-mock
     repo: https://github.com/eerimoq/moblin
     pin: 0ae5294950166978064840bc874bfed3a8cf03a4
@@ -97,6 +126,11 @@ pairs:
   - sender: irlserver-srtla-send
     receiver: ours
     tier: blocking
+
+  - sender: ceralive-srtla-send-rs
+    receiver: ours
+    tier: blocking
+    notes: "ADR-003 Rust sender cutover gate — fork srtla_send -> C srtla_rec"
 
   - sender: moblin-mock
     receiver: ours

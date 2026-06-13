@@ -285,8 +285,10 @@ RX_PID=$!; track "$RX_PID"
 wait_for_marker "$RX_LOG" "srtla_rec is now running" 5 || die "receiver never came up"
 
 # srtla_send (host) bonds the two source IPs toward the receiver.
+# RUST_LOG only affects the Rust fork sender (the C sender logs unconditionally);
+# without it the fork is silent and the both-links-added evidence grep sees nothing.
 printf '%s\n%s\n' "$SRC_A" "$SRC_B" > "$IPS_FILE"
-"$SRTLA_SEND" "$LOCAL_SRT_PORT" "$RX_IP" "$SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
+RUST_LOG="${RUST_LOG:-info}" "$SRTLA_SEND" "$LOCAL_SRT_PORT" "$RX_IP" "$SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
 TX_PID=$!; track "$TX_PID"
 sleep 0.6
 
