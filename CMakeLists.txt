@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(srtla VERSION 1.0.0 LANGUAGES C CXX)
+project(srtla VERSION 2026.6.2 LANGUAGES C CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/Modules")
 
