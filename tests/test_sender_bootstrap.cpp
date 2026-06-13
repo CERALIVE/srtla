@@ -133,4 +133,56 @@ TEST(SenderReloadGuard, UnreadableFileYieldsZeroAndIsRefused) {
         reload_should_apply(count_parseable_source_ips("/tmp/srtla_does_not_exist_xyz")));
 }
 
+TEST(SenderReloadError, FileNotFoundReturnsFileNotFound) {
+    auto error = analyze_reload_error("/tmp/srtla_does_not_exist_xyz");
+    EXPECT_EQ(error, ReloadError::FileNotFound);
+}
+
+TEST(SenderReloadError, EmptyFileReturnsFileEmpty) {
+    TempIpsFile f("");
+    auto error = analyze_reload_error(f.path());
+    EXPECT_EQ(error, ReloadError::FileEmpty);
+}
+
+TEST(SenderReloadError, AllGarbageReturnsZeroValidIPs) {
+    TempIpsFile f("not-an-ip\nlol\n???\n");
+    auto error = analyze_reload_error(f.path());
+    EXPECT_EQ(error, ReloadError::ZeroValidIPs);
+}
+
+TEST(SenderReloadError, MixedValidAndInvalidReturnsInvalidLine) {
+    TempIpsFile f("10.0.0.10\ngarbage\n10.0.1.10\n");
+    auto error = analyze_reload_error(f.path());
+    EXPECT_EQ(error, ReloadError::InvalidLine);
+}
+
+TEST(SenderReloadError, AllValidReturnsNone) {
+    TempIpsFile f("10.0.0.10\n10.0.1.10\n192.168.1.50\n");
+    auto error = analyze_reload_error(f.path());
+    EXPECT_EQ(error, ReloadError::None);
+}
+
+TEST(SenderReloadError, InvalidLineNumberIsReported) {
+    TempIpsFile f("10.0.0.10\ngarbage\n10.0.1.10\n");
+    int line_num = 0;
+    auto error = analyze_reload_error(f.path(), &line_num);
+    EXPECT_EQ(error, ReloadError::InvalidLine);
+    EXPECT_EQ(line_num, 2);
+}
+
+TEST(SenderReloadError, FirstInvalidLineNumberReportedWhenMultiple) {
+    TempIpsFile f("10.0.0.10\ngarbage1\ngarbage2\n10.0.1.10\n");
+    int line_num = 0;
+    auto error = analyze_reload_error(f.path(), &line_num);
+    EXPECT_EQ(error, ReloadError::InvalidLine);
+    EXPECT_EQ(line_num, 2);
+}
+
+TEST(SenderReloadError, EmptyLinesAreSkipped) {
+    TempIpsFile f("10.0.0.10\n\n10.0.1.10\n");
+    auto error = analyze_reload_error(f.path());
+    EXPECT_EQ(error, ReloadError::None);
+    EXPECT_EQ(count_parseable_source_ips(f.path()), 2);
+}
+
 } // namespace

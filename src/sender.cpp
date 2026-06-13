@@ -539,11 +539,31 @@ void update_conns(char *source_ip_file) {
      garbage, or unreadable file). Without this guard every existing link would
      be marked removed and torn down, killing the stream — and setup_conns()
      would exit() on an unreadable file. Keep streaming on the current links. */
-  if (!srtla::sender::reload_should_apply(
-          srtla::sender::count_parseable_source_ips(source_ip_file))) {
-    spdlog::error("Ignoring source IP reload from {}: no valid source IPs "
-                  "(parse error); keeping existing connections",
-                  source_ip_file);
+  int error_line_num = 0;
+  auto error = srtla::sender::analyze_reload_error(source_ip_file, &error_line_num);
+  
+  if (error != srtla::sender::ReloadError::None) {
+    switch (error) {
+      case srtla::sender::ReloadError::FileNotFound:
+        spdlog::error("ips file not found/unreadable: {}, refusing reload",
+                      source_ip_file);
+        break;
+      case srtla::sender::ReloadError::FileEmpty:
+        spdlog::error("ips file is empty: {}, refusing reload",
+                      source_ip_file);
+        break;
+      case srtla::sender::ReloadError::ZeroValidIPs:
+        spdlog::error("Ignoring source IP reload from {}: no valid source IPs "
+                      "(parse error); keeping existing connections",
+                      source_ip_file);
+        break;
+      case srtla::sender::ReloadError::InvalidLine:
+        spdlog::error("invalid IP on line {}: skipping invalid lines in {}",
+                      error_line_num, source_ip_file);
+        break;
+      default:
+        break;
+    }
     return;
   }
 
