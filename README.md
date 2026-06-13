@@ -4,6 +4,14 @@ SRTLA bonds multiple network connections together for live video streaming, prov
 
 This is a fork of the [BELABOX SRTLA project](https://github.com/BELABOX/srtla), with contributions from IRLToolkit, IRLServer, OpenIRL, and CeraLive.
 
+> **⚠️ The C `srtla_send` is deprecated and no longer shipped.**
+> The `srtla` package is now **receiver-only** (`srtla_rec`). The device-side
+> sender has moved to the Rust fork **[srtla-send-rs](https://github.com/CERALIVE/srtla-send-rs)**
+> (ADR-003), which installs `/usr/bin/srtla_send` and is CLI- and telemetry-compatible.
+> The C sender source and its test suite remain in this repo as the protocol
+> reference and still build/run under `ctest` — they are simply excluded from the
+> installed package. To run the sender, install the `srtla-send-rs` package.
+
 ## What It Does
 
 ```
@@ -108,6 +116,10 @@ sudo make install
 ## Command Reference
 
 ### srtla_send
+
+> **Deprecated / not shipped by this package.** The `srtla_send` binary now ships
+> in the [srtla-send-rs](https://github.com/CERALIVE/srtla-send-rs) package. The
+> CLI below is preserved for reference and matched by the Rust fork.
 
 ```bash
 srtla_send <listen_port> <srtla_host> <srtla_port> <ips_file> [--verbose]

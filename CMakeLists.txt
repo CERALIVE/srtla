@@ -91,7 +91,12 @@ target_compile_definitions(srtla_send PUBLIC VERSION="${CMAKE_PROJECT_VERSION}")
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
-install(TARGETS srtla_rec srtla_send RUNTIME DESTINATION bin)
+
+# Receiver-only install: the srtla .deb ships srtla_rec only. The C srtla_send
+# is DEPRECATED — the device-side sender is now srtla-send-rs (ADR-003). The
+# srtla_send target above is still built and exercised by the GTest suite, but
+# it is deliberately excluded from `install`, so it is absent from the package.
+install(TARGETS srtla_rec RUNTIME DESTINATION bin)
 
 # Testing
 if(SRTLA_BUILD_TESTS)

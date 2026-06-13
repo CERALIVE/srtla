@@ -4,12 +4,22 @@ Parent: [`../AGENTS.md`](../AGENTS.md)
 
 ## ROLE IN THE GROUP
 
-Bonds multiple uplinks (LTE, WiFi) into a single SRT stream. Produces `srtla_send` (device-side) and `srtla_rec` (server-side) binaries plus TypeScript bindings.
+Bonds multiple uplinks (LTE, WiFi) into a single SRT stream. Builds `srtla_send` (C sender, **deprecated** — see below) and `srtla_rec` (server-side receiver) binaries plus TypeScript bindings.
 
 Consumers:
 - **CeraUI backend** — TS bindings via `link:../../../srtla/bindings/typescript` (`@ceralive/srtla`)
-- **Device image** — `srtla` .deb (built by `image-building-pipeline`)
+- **Device image** — `srtla` .deb (built by `image-building-pipeline`); **receiver-only** as of the cutover release — ships `srtla_rec` only
 - **obs-srtla-sender-plugin** — retired 2026-06-11 (was a runtime dep only, never in the device image; repo retained on GitHub)
+
+## C SENDER DEPRECATED — RECEIVER-ONLY .deb (ADR-003)
+
+The device-side sender is now **[srtla-send-rs](https://github.com/CERALIVE/srtla-send-rs)** (the Rust fork, ADR-003; v1.0.0 released). The C `srtla_send` is **DEPRECATED and no longer shipped**: the `srtla` .deb is **receiver-only** (`srtla_rec` only). The sender binary `/usr/bin/srtla_send` now comes from the `srtla-send-rs` package.
+
+What this means in-tree:
+- **Source and tests stay.** `src/sender.cpp` / `src/sender.h` / `src/sender_logic.h` and every GTest suite (incl. `test_sender_bootstrap.cpp`) remain in the repo and **still build and run** — `srtla_send` is a normal build target, exercised by `ctest` (19 suites). Only the **install/package payload** drops it (`install(TARGETS srtla_rec ...)` in `CMakeLists.txt`; the `srtla-send.service` systemd unit is no longer in the `publish-release.yml` FPM payload).
+- **Do NOT delete the C sender source or its tests** (Rule E). It is the protocol reference and keeps the compat harness' C-sender pairs runnable.
+- **TS bindings are unchanged.** `bindings/typescript` still ships `srtla_send` *and* `srtla_rec` helpers (`@ceralive/srtla`); the sender helpers now target the `srtla-send-rs` binary, which is CLI- and telemetry-compatible (ADR-003 parity layer).
+- Device-image packaging: `srtla` provides `srtla_rec`; `srtla-send-rs` provides `srtla_send`. The fork's `.deb` declares `Conflicts/Replaces: srtla (<< <cutover-version>)`; that bound must be set to this receiver-only srtla release's version so the two packages coexist (sender from the fork, receiver from `srtla`).
 
 ## OVERVIEW
 
