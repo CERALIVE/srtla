@@ -101,18 +101,20 @@ jobs:
         run: |
           mkdir -p dist
 
-          # Create .deb package (also ships the systemd unit, ADR-0005)
+          # Receiver-only package: ships srtla_rec only. The C srtla_send is
+          # deprecated and no longer installed (ADR-003); the device sender now
+          # comes from the srtla-send-rs package, which carries its own systemd
+          # unit. The sender unit is therefore not part of this payload.
           fpm -s dir -t deb \
             -n srtla \
             -v "${VERSION}" \
             -a "${ARCH}" \
-            --description "SRTLA - SRT Link Aggregation sender and receiver" \
+            --description "SRTLA - SRT Link Aggregation receiver (srtla_rec)" \
             --maintainer "CERALIVE <contact@ceralive.com>" \
             --url "https://github.com/CERALIVE/srtla" \
             --license "AGPL-3.0" \
             -p "dist/srtla_${VERSION}_${ARCH}.deb" \
-            install/usr/=/usr/ \
-            packaging/systemd/srtla-send.service=/usr/lib/systemd/system/srtla-send.service
+            install/usr/=/usr/
 
           # Create .tar.gz archive
           mkdir -p tarball/srtla-${VERSION}
