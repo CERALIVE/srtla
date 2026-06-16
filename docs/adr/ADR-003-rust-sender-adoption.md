@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted
 
 ## 1. Context
 
