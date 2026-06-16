@@ -165,14 +165,14 @@ jobs:
       # worker regenerates and signs Packages/Release once per channel — no
       # per-repo reindex race. R2 upload is handled by apt-worker.
 
-       - name: Trigger centralized APT reindex
-         uses: peter-evans/repository-dispatch@v3
-         with:
-           token: ${{ secrets.CERALIVE_DISPATCH_TOKEN }}
-           repository: CERALIVE/apt-worker
-           event-type: apt-reindex
-           client-payload: >-
-             {"component":"srtla","repo":"srtla","channel":"${{ needs.calculate-version.outputs.channel }}","tag":"v${{ needs.calculate-version.outputs.version }}","version":"${{ needs.calculate-version.outputs.version }}"}
+      - name: Trigger centralized APT reindex
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.CERALIVE_DISPATCH_TOKEN }}
+          repository: CERALIVE/apt-worker
+          event-type: apt-reindex
+          client-payload: >-
+            {"component":"srtla","repo":"srtla","channel":"${{ needs.calculate-version.outputs.channel }}","tag":"v${{ needs.calculate-version.outputs.version }}","version":"${{ needs.calculate-version.outputs.version }}"}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
