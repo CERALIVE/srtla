@@ -137,8 +137,8 @@ jobs:
             dist/*.tar.gz
             dist/*.sha256
 
-  sign-and-publish:
-    name: Sign and Publish to R2
+  publish:
+    name: Publish receiver .deb to R2
     needs: [calculate-version, build-deb]
     runs-on: ubuntu-latest
     permissions:
@@ -159,30 +159,10 @@ jobs:
           cp artifacts/srtla-arm64/*.sha256 dist/release/
           cp artifacts/srtla-amd64/*.sha256 dist/release/
 
-      - name: Import GPG key
-        run: |
-          echo "${{ secrets.DEB_SIGNING_KEY_B64 }}" | base64 -d | gpg --batch --import
-
-      - name: Install apt-utils
-        run: sudo apt-get update && sudo apt-get install -y apt-utils
-
-      - name: Generate and sign repo metadata (arm64)
-        run: |
-          cd dist/arm64
-          dpkg-scanpackages . > Packages
-          gzip -k Packages
-          apt-ftparchive release . > Release
-          gpg --batch --yes -abs -o Release.gpg Release
-          gpg --batch --yes --clearsign -o InRelease Release
-
-      - name: Generate and sign repo metadata (amd64)
-        run: |
-          cd dist/amd64
-          dpkg-scanpackages . > Packages
-          gzip -k Packages
-          apt-ftparchive release . > Release
-          gpg --batch --yes -abs -o Release.gpg Release
-          gpg --batch --yes --clearsign -o InRelease Release
+      # No per-repo APT metadata here: index ownership is centralized in
+      # CERALIVE/apt-worker. This job uploads only the receiver .deb, then fires
+      # an `apt-reindex` repository_dispatch (below) so the worker regenerates
+      # and signs Packages/Release once per channel — no per-repo reindex race.
 
       - name: Ensure AWS CLI
         run: |
@@ -211,14 +191,28 @@ jobs:
           aws configure set aws_access_key_id "$R2_ACCESS_KEY_ID"
           aws configure set aws_secret_access_key "$R2_SECRET_ACCESS_KEY"
 
-          # R2 returns NoSuchKey from ListObjectsV2 for a not-yet-existing
-          # prefix, which breaks `aws s3 sync` on the first upload to a channel.
-          # `cp --recursive` uploads without diffing the destination: it
-          # overwrites the apt metadata and accumulates per-version .debs.
+          # Receiver .deb only — apt-worker owns Packages/Release. R2 returns
+          # NoSuchKey from ListObjectsV2 for a not-yet-existing prefix, which
+          # breaks `aws s3 sync` on the first upload to a channel; `cp --recursive`
+          # uploads without diffing, accumulating per-version .debs in the prefix.
           aws s3 cp dist/arm64/ "s3://$R2_BUCKET/dists/$CHANNEL/binary-arm64/" \
             --recursive --endpoint-url "$R2_ENDPOINT"
           aws s3 cp dist/amd64/ "s3://$R2_BUCKET/dists/$CHANNEL/binary-amd64/" \
             --recursive --endpoint-url "$R2_ENDPOINT"
+
+      # Hand off to the central index owner: apt-worker regenerates and signs
+      # Packages/Release for this channel after the .deb lands in R2.
+      # CERALIVE_DISPATCH_TOKEN is NOT yet an org secret — it must be added: a
+      # fine-grained PAT with `contents: write` on CERALIVE/apt-worker so this
+      # repo can fire the cross-repo reindex.
+      - name: Trigger centralized APT reindex
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.CERALIVE_DISPATCH_TOKEN }}
+          repository: CERALIVE/apt-worker
+          event-type: apt-reindex
+          client-payload: >-
+            {"component":"srtla","version":"${{ needs.calculate-version.outputs.version }}","channel":"${{ needs.calculate-version.outputs.channel }}"}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
