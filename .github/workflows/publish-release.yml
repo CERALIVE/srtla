@@ -138,7 +138,7 @@ jobs:
             dist/*.sha256
 
   publish:
-    name: Publish receiver .deb to R2
+    name: Publish receiver .deb
     needs: [calculate-version, build-deb]
     runs-on: ubuntu-latest
     permissions:
@@ -160,51 +160,11 @@ jobs:
           cp artifacts/srtla-amd64/*.sha256 dist/release/
 
       # No per-repo APT metadata here: index ownership is centralized in
-      # CERALIVE/apt-worker. This job uploads only the receiver .deb, then fires
-      # an `apt-reindex` repository_dispatch (below) so the worker regenerates
-      # and signs Packages/Release once per channel — no per-repo reindex race.
+      # CERALIVE/apt-worker. This job attaches the receiver .deb to the GitHub
+      # release, then fires an `apt-reindex` repository_dispatch (below) so the
+      # worker regenerates and signs Packages/Release once per channel — no
+      # per-repo reindex race. R2 upload is handled by apt-worker.
 
-      - name: Ensure AWS CLI
-        run: |
-          # ubuntu-latest ships AWS CLI v2 preinstalled; `aws/install` without
-          # --update aborts on a preexisting install. Only fetch when absent.
-          if ! command -v aws >/dev/null; then
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip -q awscliv2.zip
-            sudo ./aws/install
-          fi
-          aws --version
-
-      - name: Upload to R2
-        env:
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          CHANNEL: ${{ needs.calculate-version.outputs.channel }}
-          # aws-cli >= 2.23 sends CRC32/CRC64NVME integrity checksums on every
-          # request by default; Cloudflare R2 does not implement them and rejects
-          # the call. Restore the pre-2.23 behavior so the cp uploads succeed.
-          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-        run: |
-          aws configure set aws_access_key_id "$R2_ACCESS_KEY_ID"
-          aws configure set aws_secret_access_key "$R2_SECRET_ACCESS_KEY"
-
-          # Receiver .deb only — apt-worker owns Packages/Release. R2 returns
-          # NoSuchKey from ListObjectsV2 for a not-yet-existing prefix, which
-          # breaks `aws s3 sync` on the first upload to a channel; `cp --recursive`
-          # uploads without diffing, accumulating per-version .debs in the prefix.
-          aws s3 cp dist/arm64/ "s3://$R2_BUCKET/dists/$CHANNEL/binary-arm64/" \
-            --recursive --endpoint-url "$R2_ENDPOINT"
-          aws s3 cp dist/amd64/ "s3://$R2_BUCKET/dists/$CHANNEL/binary-amd64/" \
-            --recursive --endpoint-url "$R2_ENDPOINT"
-
-      # Hand off to the central index owner: apt-worker regenerates and signs
-      # Packages/Release for this channel after the .deb lands in R2.
-      # CERALIVE_DISPATCH_TOKEN is NOT yet an org secret — it must be added: a
-      # fine-grained PAT with `contents: write` on CERALIVE/apt-worker so this
-      # repo can fire the cross-repo reindex.
       - name: Trigger centralized APT reindex
         uses: peter-evans/repository-dispatch@v3
         with:
