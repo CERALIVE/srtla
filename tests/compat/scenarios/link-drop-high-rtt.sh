@@ -329,20 +329,25 @@ sleep "$STREAM_SEC"
 log "==> phase 3: isolate link1 (${LINK1_IP}) for ${DROP_SEC}s"
 
 # Snapshot per-link failure markers BEFORE the drop so we only count NEW ones
-# (the bootstrap handshake can log a transient reconnect at startup).
-link1_failed_pre=$(count_re "$TX_LOG" "${LINK1_IP}.*connection failed")
-link2_failed_pre=$(count_re "$TX_LOG" "${LINK2_IP}.*connection failed")
+# (the bootstrap handshake can log a transient reconnect at startup). The marker
+# is sender-agnostic: the C srtla_send logs "<ip> ... connection failed" while the
+# Rust fork (srtla-send-rs) logs "via <ip> ... timed out; attempting full socket
+# reconnection" — same behavioral event, different wording (mirrors link-drop.sh).
+link1_failed_pre=$(count_re "$TX_LOG" "(${LINK1_IP}.*connection failed|via ${LINK1_IP}.*timed out; attempting full socket reconnection)")
+link2_failed_pre=$(count_re "$TX_LOG" "(${LINK2_IP}.*connection failed|via ${LINK2_IP}.*timed out; attempting full socket reconnection)")
 
 DROP_T0="$(now_ms)"
 drop_link1
 
-# A NEW "connection failed, attempting to reconnect" for link1 proves the drop
-# took hold and the sender stopped trusting it (traffic shifts to the survivor).
+# A NEW link-failure marker for link1 proves the drop took hold and the sender
+# stopped trusting it (traffic shifts to the survivor). Matches both the C sender
+# ("connection failed") and the Rust fork ("timed out; attempting full socket
+# reconnection") so the scenario is sender-agnostic.
 link1_failed=false
 shift_ms=-1
 deadline=$(( DROP_T0 + SHIFT_DEADLINE_MS ))
 while [[ "$(now_ms)" -lt "$deadline" ]]; do
-  link1_failed_now=$(count_re "$TX_LOG" "${LINK1_IP}.*connection failed")
+  link1_failed_now=$(count_re "$TX_LOG" "(${LINK1_IP}.*connection failed|via ${LINK1_IP}.*timed out; attempting full socket reconnection)")
   if [[ "$link1_failed_now" -gt "$link1_failed_pre" ]]; then
     link1_failed=true
     shift_ms=$(( $(now_ms) - DROP_T0 ))
@@ -360,7 +365,7 @@ remain=$(( DROP_SEC * 1000 - elapsed ))
 # The survivor (link2) must NOT have failed across the whole drop window, and the
 # stream processes must still be alive — together this is post-isolation delivery
 # (the survivor kept carrying media while link1 was dead).
-link2_failed_now=$(count_re "$TX_LOG" "${LINK2_IP}.*connection failed")
+link2_failed_now=$(count_re "$TX_LOG" "(${LINK2_IP}.*connection failed|via ${LINK2_IP}.*timed out; attempting full socket reconnection)")
 survivor_stayed_up=false
 [[ "$link2_failed_now" -le "$link2_failed_pre" ]] && survivor_stayed_up=true
 
