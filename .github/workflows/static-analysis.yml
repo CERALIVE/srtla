@@ -6,13 +6,20 @@ on:
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: static-analysis-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   clang-tidy:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
       
@@ -23,11 +30,21 @@ jobs:
             clang-tidy \
             cmake \
             pkg-config \
-            libspdlog-dev
+            libspdlog-dev \
+            ccache
+      
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-clang-tidy-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-clang-tidy-
       
       - name: Configure CMake
         run: |
-          cmake -B build -DSRTLA_BUILD_TESTS=OFF -DSRTLA_ENABLE_CLANG_TIDY=OFF
+          cmake -B build -DSRTLA_BUILD_TESTS=OFF -DSRTLA_ENABLE_CLANG_TIDY=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       
       - name: Run clang-tidy
         run: |
@@ -38,7 +55,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
       
@@ -48,11 +65,21 @@ jobs:
           sudo apt-get install -y \
             cmake \
             pkg-config \
-            libspdlog-dev
+            libspdlog-dev \
+            ccache
+      
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-test-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-test-
       
       - name: Configure CMake
         run: |
-          cmake -B build -DSRTLA_BUILD_TESTS=ON
+          cmake -B build -DSRTLA_BUILD_TESTS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       
       - name: Build
         run: |

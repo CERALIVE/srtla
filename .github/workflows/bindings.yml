@@ -12,6 +12,13 @@ on:
       - "bindings/typescript/**"
       - ".github/workflows/bindings.yml"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: bindings-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     name: Build & Test
@@ -21,7 +28,7 @@ jobs:
         working-directory: bindings/typescript
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -43,8 +50,10 @@ jobs:
       - name: Summary
         if: success()
         run: |
-          echo "## TypeScript bindings green" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Type-check: bun run lint" >> $GITHUB_STEP_SUMMARY
-          echo "- Build: bun run build" >> $GITHUB_STEP_SUMMARY
-          echo "- Tests: bun test" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## TypeScript bindings green"
+            echo ""
+            echo "- Type-check: bun run lint"
+            echo "- Build: bun run build"
+            echo "- Tests: bun test"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -12,6 +12,13 @@ on:
           - beta
         default: stable
 
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   calculate-version:
     name: Calculate Version
@@ -21,7 +28,7 @@ jobs:
       channel: ${{ steps.calver.outputs.channel }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -59,8 +66,10 @@ jobs:
             CHANNEL="stable"
           fi
 
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
+          {
+            echo "version=${VERSION}"
+            echo "channel=${CHANNEL}"
+          } >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION} (Channel: ${CHANNEL})"
 
   build-deb:
@@ -76,7 +85,7 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -88,8 +97,8 @@ jobs:
       - name: Build srtla
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DSRTLA_BUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX=/usr
-          cmake --build build -j$(nproc)
-          DESTDIR=$PWD/install cmake --install build
+          cmake --build build -j"$(nproc)"
+          DESTDIR="$PWD/install" cmake --install build
 
       - name: Install FPM
         run: sudo gem install fpm
@@ -117,19 +126,19 @@ jobs:
             install/usr/=/usr/
 
           # Create .tar.gz archive
-          mkdir -p tarball/srtla-${VERSION}
-          cp -r install/usr/* tarball/srtla-${VERSION}/
+          mkdir -p "tarball/srtla-${VERSION}"
+          cp -r install/usr/* "tarball/srtla-${VERSION}/"
           cd tarball
-          tar -czvf ../dist/srtla_${VERSION}_${ARCH}.tar.gz srtla-${VERSION}
+          tar -czvf "../dist/srtla_${VERSION}_${ARCH}.tar.gz" "srtla-${VERSION}"
           cd ..
 
           # Create checksums
           cd dist
-          sha256sum srtla_${VERSION}_${ARCH}.deb > srtla_${VERSION}_${ARCH}.deb.sha256
-          sha256sum srtla_${VERSION}_${ARCH}.tar.gz > srtla_${VERSION}_${ARCH}.tar.gz.sha256
+          sha256sum "srtla_${VERSION}_${ARCH}.deb" > "srtla_${VERSION}_${ARCH}.deb.sha256"
+          sha256sum "srtla_${VERSION}_${ARCH}.tar.gz" > "srtla_${VERSION}_${ARCH}.tar.gz.sha256"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: srtla-${{ matrix.arch }}
           path: |
@@ -145,7 +154,7 @@ jobs:
       contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -166,7 +175,7 @@ jobs:
       # per-repo reindex race. R2 upload is handled by apt-worker.
 
       - name: Trigger centralized APT reindex
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.CERALIVE_DISPATCH_TOKEN }}
           repository: CERALIVE/apt-worker
@@ -175,7 +184,7 @@ jobs:
             {"component":"srtla","repo":"srtla","channel":"${{ needs.calculate-version.outputs.channel }}","tag":"v${{ needs.calculate-version.outputs.version }}","version":"${{ needs.calculate-version.outputs.version }}"}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.calculate-version.outputs.version }}
           name: srtla v${{ needs.calculate-version.outputs.version }}

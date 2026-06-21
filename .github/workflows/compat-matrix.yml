@@ -53,7 +53,7 @@ jobs:
       has_informational: ${{ steps.gen.outputs.has_informational }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install PyYAML
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq python3-yaml
@@ -100,12 +100,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Restore external image cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/compat-images
           key: compat-images-blocking-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/docker/**') }}
@@ -120,7 +120,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compat-results-blocking
           path: tests/compat/results/**/result.json
@@ -136,12 +136,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Restore external image cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/compat-images
           key: compat-images-informational-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/docker/**') }}
@@ -156,7 +156,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compat-results-informational
           path: tests/compat/results/**/result.json
@@ -174,7 +174,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
           lfs: true
@@ -220,7 +220,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -238,7 +238,7 @@ jobs:
 
       - name: Upload drift results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compat-results-drift
           path: tests/compat/results/**/result.json
