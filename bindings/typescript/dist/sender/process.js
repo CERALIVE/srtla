@@ -4,7 +4,7 @@ import { buildSrtlaSendArgs } from "./args.js";
 const DEFAULT_BINARY = "srtla_send";
 const DEFAULT_SYSTEM_PATH = "/usr/bin/srtla_send";
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export function getSrtlaSendExec(execPath) {
@@ -15,7 +15,7 @@ export function getSrtlaSendExec(execPath) {
     });
 }
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export function spawnSrtlaSend(options) {
@@ -28,28 +28,28 @@ export function spawnSrtlaSend(options) {
     });
 }
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export async function sendSrtlaSendHup() {
     return sendSignal({ processName: DEFAULT_BINARY, signal: "-HUP" });
 }
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export async function sendSrtlaSendTerm() {
     return sendSignal({ processName: DEFAULT_BINARY });
 }
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export async function isSrtlaSendRunning() {
     return isRunning(DEFAULT_BINARY);
 }
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * Convenience: build args from options and spawn the process.

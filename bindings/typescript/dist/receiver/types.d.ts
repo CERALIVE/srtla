@@ -1,4 +1,5 @@
 import { z } from "zod";
+/** spdlog log levels accepted by `srtla_rec --log_level`. */
 export declare const logLevelSchema: z.ZodEnum<{
     error: "error";
     trace: "trace";
@@ -8,6 +9,11 @@ export declare const logLevelSchema: z.ZodEnum<{
     critical: "critical";
 }>;
 export type LogLevel = z.infer<typeof logLevelSchema>;
+/**
+ * Zod schema for `srtla_rec` (receiver) CLI options. Parses and defaults the
+ * `--srtla_port` / `--srt_hostname` / `--srt_port` arguments plus the optional
+ * `--log_level` flag. Defaults mirror the C++ receiver implementation.
+ */
 export declare const srtlaRecOptionsSchema: z.ZodObject<{
     srtlaPort: z.ZodDefault<z.ZodNumber>;
     srtHostname: z.ZodDefault<z.ZodString>;
