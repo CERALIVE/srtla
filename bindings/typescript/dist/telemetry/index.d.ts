@@ -1,6 +1,6 @@
 import { z } from "zod";
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * Sender telemetry reader (ADR-001, Option A — JSON stats file).
@@ -14,14 +14,14 @@ import { z } from "zod";
  * producer and this TS consumer never drift.
  */
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * Snapshot older than this (now - last_updated_ms) is dead. Fixed by ADR-001.
  */
 export declare const SENDER_TELEMETRY_STALE_MS = 5000;
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * Well-known path prefix, mirroring the producer's
@@ -30,14 +30,14 @@ export declare const SENDER_TELEMETRY_STALE_MS = 5000;
  */
 export declare const SENDER_TELEMETRY_PATH_PREFIX = "/tmp/srtla-send-stats-";
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * Default live stats path for a listen port (the producer computes the same).
  */
 export declare function senderTelemetryPath(listenPort: number): string;
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * One per-connection record. Field names/units mirror `connection_info_t`
@@ -54,7 +54,7 @@ export declare const connectionTelemetrySchema: z.ZodObject<{
     bitrate_bps: z.ZodNumber;
 }, z.core.$strip>;
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * One snapshot object (never NDJSON — the file holds exactly one object).
@@ -72,17 +72,17 @@ export declare const telemetrySchema: z.ZodObject<{
     }, z.core.$strip>>;
 }, z.core.$strip>;
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export type ConnectionTelemetry = z.output<typeof connectionTelemetrySchema>;
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export type Telemetry = z.output<typeof telemetrySchema>;
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * Read and validate the sender telemetry snapshot at `path`.
@@ -96,7 +96,7 @@ export type Telemetry = z.output<typeof telemetrySchema>;
  */
 export declare function readTelemetry(path: string): Promise<Telemetry | null>;
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export interface WatchTelemetryOptions {
@@ -104,7 +104,7 @@ export interface WatchTelemetryOptions {
     intervalMs?: number;
 }
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export interface WatchTelemetryHandle {
@@ -112,7 +112,7 @@ export interface WatchTelemetryHandle {
     stop: () => void;
 }
 /**
- * @deprecated Use `@ceralive/srtla-send/telemetry` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * Poll `path` on a fixed cadence, invoking `cb` with the current

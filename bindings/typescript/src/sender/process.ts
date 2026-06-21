@@ -9,7 +9,7 @@ const DEFAULT_BINARY = "srtla_send";
 const DEFAULT_SYSTEM_PATH = "/usr/bin/srtla_send";
 
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export interface SpawnSrtlaSendOptions {
@@ -19,7 +19,7 @@ export interface SpawnSrtlaSendOptions {
 }
 
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export function getSrtlaSendExec(execPath?: string): string {
@@ -31,7 +31,7 @@ export function getSrtlaSendExec(execPath?: string): string {
 }
 
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export function spawnSrtlaSend(options: SpawnSrtlaSendOptions) {
@@ -45,7 +45,7 @@ export function spawnSrtlaSend(options: SpawnSrtlaSendOptions) {
 }
 
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export async function sendSrtlaSendHup(): Promise<void> {
@@ -53,7 +53,7 @@ export async function sendSrtlaSendHup(): Promise<void> {
 }
 
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export async function sendSrtlaSendTerm(): Promise<void> {
@@ -61,7 +61,7 @@ export async function sendSrtlaSendTerm(): Promise<void> {
 }
 
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export async function isSrtlaSendRunning(): Promise<boolean> {
@@ -69,7 +69,7 @@ export async function isSrtlaSendRunning(): Promise<boolean> {
 }
 
 /**
- * @deprecated Use `@ceralive/srtla-send/sender` instead.
+ * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  *
  * Convenience: build args from options and spawn the process.
