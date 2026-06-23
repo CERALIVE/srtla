@@ -4,6 +4,18 @@
 
 Accepted
 
+> **Superseded-by (transport only, Rust sender):**
+> `srtla-send-rs/docs/adr/ADR-001-control-protocol.md`.
+>
+> **Transport superseded for the Rust sender:** The Option A (stats file) transport
+> decision is superseded for `srtla_send` (Rust fork, `srtla-send-rs`) by
+> `srtla-send-rs/docs/adr/ADR-001-control-protocol.md`, which adopts JSON-RPC 2.0
+> over the Unix `--control-socket` for engine consistency with cerastream. The
+> **JSON schema** defined in this ADR (field names, types, units, staleness) remains
+> the canonical contract — only the transport is superseded. The C `srtla_send`
+> (deprecated, receiver-only package) and the `--stats-file` option continue to use
+> Option A.
+
 ## Context
 
 `srtla_send` (device side) already knows, per uplink, everything the operator
