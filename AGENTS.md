@@ -31,7 +31,11 @@ Remotes:
 
 ## UPSTREAM MERGE STATUS
 
-The `irlserver/main` catch-up merge is **complete** (pinned at `aa66a88`, 63/63 ctest green). The `irlserver` remote is retained for future catch-ups. The TS bindings API is **settled** — safe to depend on; the additive telemetry module (`bindings/typescript/src/sender/`) was added post-merge but existing exports are frozen.
+The `irlserver/main` catch-up merge is **complete** (merge commit `edc04d6`, merge-base advanced `2de6dbb` → `39e324a`, 186/186 ctest green, compat blocking tier 9/9 PASS). `irlserver/main` is now a **true ancestor** of our HEAD — `git merge-base HEAD 39e324a` returns `39e324a`. See `docs/notes/upstream-currency-2026-06.md` for the full currency report.
+
+The `irlserver` upstream remote is **transient**: it is added inside a merge worktree, used for the fetch + pin-verify + merge, then removed before any push or PR (`scripts/upstream-merge.sh`). The working clone keeps only `origin` (CERALIVE) at rest. Do not leave an `irlserver` remote attached after a merge.
+
+The TS bindings API is **settled** — safe to depend on; the additive telemetry module (`bindings/typescript/src/sender/`) was added post-merge but existing exports are frozen.
 
 ## STRUCTURE
 
