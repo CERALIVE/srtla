@@ -1,4 +1,8 @@
 version: 2
+# Scope: github-actions (all workflows) + npm (the TS bindings package).
+# `cargo` is intentionally omitted: srtla is a C/C++/CMake repo with no Cargo.toml,
+# so there is no Rust dependency manifest for Dependabot to track. (The Rust sender
+# lives in the separate srtla-send-rs repo, which carries its own cargo updates.)
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
