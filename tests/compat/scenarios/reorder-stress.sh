@@ -47,8 +47,23 @@
 #
 # Parameterisation (env vars; empty defaults = today's behaviour, system libsrt):
 #   SINK_LD_LIBRARY_PATH  loader path so srt-sink picks a specific libsrt build
-#                         (e.g. test-results/libsrt-matrix/install/vanilla/lib).
+#                         (e.g. test-results/libsrt-matrix/install/freeze/lib).
 #   SINK_EXTRA_ARGS       extra srt-sink flags, e.g. "--nakreport 0 --lossmaxttl 30".
+#   BITRATE_KBPS          media bitrate fed to ffmpeg (default 700; A/B uses 4000/8000/12000).
+#   RX_LATENCY_MS         SRT receive-latency window on srt-sink AND the ffmpeg caller
+#                         (default 1200; A/B sweeps 250/500/800/1500/3500).
+#   NAKREPORT             0|1 -> appends --nakreport (profile recipe: periodic NAK on/off).
+#   LOSSMAXTTL            N  -> appends --lossmaxttl (reorder-tolerance cap; A/B sweeps 30/200/1000).
+#   REORDERFREEZE         0|1 -> appends --reorderfreeze (decay-freeze; needs the freeze libsrt).
+#   PROFILE_LABEL         free-form tag echoed into result.json so an A/B driver can attribute the run.
+#   NETEM_SEED            fixed seed for the phase-ii reorder discipline (reproducible A/B runs;
+#                         silently ignored on iproute2 too old for `netem ... seed`).
+#
+# The recipe-shorthand maps to the 4 non-FEC receive profiles like so (see the
+# A/B driver scenarios/profile-validation-matrix.sh): freeze+NAK (Balanced /
+# Low-Latency / Resilient) = REORDERFREEZE=1 NAKREPORT=1; freeze+NAK-off
+# (Classic) = REORDERFREEZE=1 NAKREPORT=0; stock-decay+NAK (control) =
+# REORDERFREEZE=0 NAKREPORT=1; baseline = the patched libsrt with no recipe flags.
 #
 # Machine-parseable summary line (always emitted on a completed run):
 #   reorder-stress: bytes_received=<N> disconnects=<N> duration=<N>s libsrt=<V> ...
@@ -90,6 +105,13 @@ KEEP_LOGS=0
 PHASE_SEC=14
 SINK_LD_LIBRARY_PATH="${SINK_LD_LIBRARY_PATH:-}"
 SINK_EXTRA_ARGS="${SINK_EXTRA_ARGS:-}"
+BITRATE_KBPS="${BITRATE_KBPS:-700}"
+RX_LATENCY_MS="${RX_LATENCY_MS:-1200}"
+NAKREPORT="${NAKREPORT:-}"
+LOSSMAXTTL="${LOSSMAXTTL:-}"
+REORDERFREEZE="${REORDERFREEZE:-}"
+PROFILE_LABEL="${PROFILE_LABEL:-default}"
+NETEM_SEED="${NETEM_SEED:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -101,6 +123,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ "$PHASE_SEC" =~ ^[0-9]+$ && "$PHASE_SEC" -ge 1 ]] || die "--duration must be a positive integer"
+[[ "$BITRATE_KBPS" =~ ^[0-9]+$ && "$BITRATE_KBPS" -ge 1 ]] || die "BITRATE_KBPS must be a positive integer"
+[[ "$RX_LATENCY_MS" =~ ^[0-9]+$ && "$RX_LATENCY_MS" -ge 1 ]] || die "RX_LATENCY_MS must be a positive integer"
+[[ -z "$NAKREPORT" || "$NAKREPORT" =~ ^[01]$ ]] || die "NAKREPORT must be 0 or 1"
+[[ -z "$REORDERFREEZE" || "$REORDERFREEZE" =~ ^[01]$ ]] || die "REORDERFREEZE must be 0 or 1"
+[[ -z "$LOSSMAXTTL" || "$LOSSMAXTTL" =~ ^[0-9]+$ ]] || die "LOSSMAXTTL must be a non-negative integer"
+[[ -z "$NETEM_SEED" || "$NETEM_SEED" =~ ^[0-9]+$ ]] || die "NETEM_SEED must be a non-negative integer"
 
 for tool in ffmpeg jq; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool '$tool' not found in PATH"
@@ -169,8 +197,9 @@ LOCAL_SRT_PORT=6401
 
 # SRT receive window must exceed the worst cross-link skew (150ms + reorder)
 # so the bonded stream rides reordering without an end-to-end disconnect; a real
-# SRTLA caller (cerastream/Moblin) is tuned the same way. 1.2s >> 150ms+20ms.
-SRT_LATENCY_MS=1200
+# SRTLA caller (cerastream/Moblin) is tuned the same way. Default 1.2s >> 150ms+20ms;
+# the A/B driver overrides it via RX_LATENCY_MS to sweep the receive-latency axis.
+SRT_LATENCY_MS="$RX_LATENCY_MS"
 ESTABLISH_SEC=5
 MEAS_SEC=$(( ESTABLISH_SEC + 2 * PHASE_SEC ))
 
@@ -225,6 +254,17 @@ qdisc_sent_pkts() { # dev handle(e.g. "10:") -> integer
   printf '%s' "${n:-0}"
 }
 
+# Total egress wire BYTES the qdisc <handle> has Sent ($2 of its "Sent" line);
+# read on the root "1:" prio it is the bonded forward-wire volume that the
+# wire-amplification ratio (wire_bytes / bytes_received) is built from.
+qdisc_sent_bytes() { # dev handle(e.g. "1:") -> integer
+  local n
+  n="$(tc -s qdisc show dev "$1" 2>/dev/null | awk -v h="$2" '
+        $1=="qdisc" && $3==h {f=1; next}
+        f && $1=="Sent" {print $2; exit}')"
+  printf '%s' "${n:-0}"
+}
+
 setup_topology() {
   ip link set lo up 2>/dev/null || true   # host-side loopback (needed under a fresh netns / unshare)
 
@@ -271,6 +311,11 @@ SINK_RESOLVED="$(LD_LIBRARY_PATH="$SINK_LD_LIBRARY_PATH" ldd "$SRT_SINK" 2>/dev/
 log "    srt-sink libsrt resolves to: ${SINK_RESOLVED:-<system default>}"
 # shellcheck disable=SC2206  # deliberate word-split of caller-supplied sink flags
 SINK_ARGS=($SINK_EXTRA_ARGS)
+# Recipe knobs append explicit srt-sink flags on top of SINK_EXTRA_ARGS so an A/B
+# driver can express a profile (freeze+NAK, freeze+NAK-off, ...) without string-building.
+[[ -n "$NAKREPORT" ]]     && SINK_ARGS+=(--nakreport "$NAKREPORT")
+[[ -n "$LOSSMAXTTL" ]]    && SINK_ARGS+=(--lossmaxttl "$LOSSMAXTTL")
+[[ -n "$REORDERFREEZE" ]] && SINK_ARGS+=(--reorderfreeze "$REORDERFREEZE")
 ip netns exec "$NS" env LD_LIBRARY_PATH="$SINK_LD_LIBRARY_PATH" \
    "$SRT_SINK" --port "$SINK_PORT" --host 127.0.0.1 --result "$SINK_JSON" \
                --latency "$SRT_LATENCY_MS" --duration $(( MEAS_SEC + 25 )) \
@@ -297,8 +342,12 @@ sleep 0.6
 # latency/timeout options are in MICROSECONDS).
 SRT_LATENCY_US=$(( SRT_LATENCY_MS * 1000 ))
 SRT_OPTS="mode=caller&transtype=live&latency=${SRT_LATENCY_US}&peerlatency=${SRT_LATENCY_US}&sndbuf=24000000&timeout=30000000"
+# Default (700k) keeps today's 320x240@25; HD-rate A/B runs need a larger, busier
+# source so the mpeg2video encoder actually emits the requested multi-Mbps target.
+FF_SIZE=320x240; FF_RATE=25
+if [[ "$BITRATE_KBPS" -ge 4000 ]]; then FF_SIZE=1280x720; FF_RATE=30; fi
 ffmpeg -hide_banner -loglevel warning -re \
-  -f lavfi -i testsrc2=size=320x240:rate=25 -c:v mpeg2video -b:v 700k -f mpegts \
+  -f lavfi -i "testsrc2=size=${FF_SIZE}:rate=${FF_RATE}" -c:v mpeg2video -b:v "${BITRATE_KBPS}k" -f mpegts \
   "srt://127.0.0.1:${LOCAL_SRT_PORT}?${SRT_OPTS}" \
   >"$FF_LOG" 2>&1 &
 FF_PID=$!; track "$FF_PID"
@@ -321,10 +370,20 @@ sleep "$PHASE_SEC"
 # ----------------------------------------------------------------------------- #
 # Phase ii — layer an explicit reorder discipline onto the fast link.            #
 # ----------------------------------------------------------------------------- #
-log "==> phase ii: netem reorder 25% 50% delay ${REORDER_DELAY_MS}ms on link A for ${PHASE_SEC}s"
-tc qdisc change dev "$HOSTIF" parent 1:1 handle 10: \
-   netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% \
-   || die "could not apply reorder discipline"
+log "==> phase ii: netem reorder 25% 50% delay ${REORDER_DELAY_MS}ms on link A for ${PHASE_SEC}s${NETEM_SEED:+ (seed ${NETEM_SEED})}"
+# Fixed `seed` makes the random reorder/gap draw reproducible across paired A/B
+# runs; older iproute2 lacks the keyword, so fall back to the seedless form.
+if [[ -n "$NETEM_SEED" ]]; then
+  tc qdisc change dev "$HOSTIF" parent 1:1 handle 10: \
+     netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% seed "$NETEM_SEED" 2>/dev/null \
+  || tc qdisc change dev "$HOSTIF" parent 1:1 handle 10: \
+       netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% \
+  || die "could not apply reorder discipline"
+else
+  tc qdisc change dev "$HOSTIF" parent 1:1 handle 10: \
+     netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% \
+     || die "could not apply reorder discipline"
+fi
 
 reorder_configured=false
 { printf '=== after applying reorder (phase ii start) ===\n'; tc -s qdisc show dev "$HOSTIF"; } >>"$TC_LOG" 2>&1
@@ -334,11 +393,13 @@ reorder_p0="$(qdisc_sent_pkts "$HOSTIF" "10:")"   # fast-link pkts before phase 
 sleep "$PHASE_SEC"
 reorder_p1="$(qdisc_sent_pkts "$HOSTIF" "10:")"   # ... after
 band_b_pkts="$(qdisc_sent_pkts "$HOSTIF" "20:")"  # slow-link total (asymmetry proof)
+wire_bytes="$(qdisc_sent_bytes "$HOSTIF" "1:")"   # total bonded forward-wire egress (root prio)
 { printf '=== after phase ii (phase ii end) ===\n'; tc -s qdisc show dev "$HOSTIF"; } >>"$TC_LOG" 2>&1
 
 [[ "$reorder_p0" =~ ^[0-9]+$ ]] || reorder_p0=0
 [[ "$reorder_p1" =~ ^[0-9]+$ ]] || reorder_p1=0
 [[ "$band_b_pkts" =~ ^[0-9]+$ ]] || band_b_pkts=0
+[[ "$wire_bytes" =~ ^[0-9]+$ ]] || wire_bytes=0
 reorder_pkts=$(( reorder_p1 - reorder_p0 ))
 [[ "$reorder_pkts" -lt 0 ]] && reorder_pkts=0
 
@@ -361,6 +422,23 @@ sdur_ms="$(jq -r '.duration_ms // 0'  "$SINK_JSON" 2>/dev/null || echo 0)"
 [[ "$disc" =~ ^-?[0-9]+$ ]] || disc=-1
 [[ "$sdur_ms" =~ ^[0-9]+$ ]] || sdur_ms=0
 duration_s=$(( sdur_ms / 1000 ))
+
+# TS-continuity + SRT loss/retrans counters (srt-sink Task-5 additive keys). These
+# are the A/B "equal" gate signal: a spurious-retransmit or late-drop profile shows
+# up as ts_cc_errors / pkt_rcv_drop / pkt_retrans even when bytes_received matches.
+ts_sync="$(jq -r '.ts_sync_errors // -1' "$SINK_JSON" 2>/dev/null || echo -1)"
+ts_cc="$(jq -r '.ts_cc_errors // -1'     "$SINK_JSON" 2>/dev/null || echo -1)"
+ts_pkts="$(jq -r '.ts_packets // 0'      "$SINK_JSON" 2>/dev/null || echo 0)"
+pkt_loss="$(jq -r '.pkt_rcv_loss // 0'   "$SINK_JSON" 2>/dev/null || echo 0)"
+pkt_drop="$(jq -r '.pkt_rcv_drop // 0'   "$SINK_JSON" 2>/dev/null || echo 0)"
+pkt_retr="$(jq -r '.pkt_retrans // 0'    "$SINK_JSON" 2>/dev/null || echo 0)"
+for v in ts_sync ts_cc; do [[ "${!v}" =~ ^-?[0-9]+$ ]] || printf -v "$v" '%s' -1; done
+for v in ts_pkts pkt_loss pkt_drop pkt_retr; do [[ "${!v}" =~ ^[0-9]+$ ]] || printf -v "$v" '%s' 0; done
+
+# Goodput (delivered B/s) and forward-wire amplification (egress / delivered) —
+# the same two quantities ADR-002's pre-registered "equal" rule compares.
+goodput=0; [[ "$duration_s" -gt 0 ]] && goodput=$(( bytes / duration_s ))
+wire_amp="$(awk -v w="$wire_bytes" -v b="$bytes" 'BEGIN{ printf "%.4f", (b>0 ? w/b : 0) }')"
 
 # libsrt version straight from the Task-4 srt-sink banner (proves which build ran).
 libsrt_ver="$(sed -n 's/^srt-sink: libsrt version \([0-9.]*\).*/\1/p' "$SINK_LOG" 2>/dev/null | head -1)"
@@ -392,16 +470,32 @@ jq -n \
   --arg sink_libsrt_path "${SINK_RESOLVED:-system}" \
   --arg sink_extra_args "${SINK_EXTRA_ARGS:-}" \
   --argjson delay_a_ms "$DELAY_A_MS" --argjson delay_b_ms "$DELAY_B_MS" \
+  --arg profile "$PROFILE_LABEL" \
+  --argjson bitrate_kbps "$BITRATE_KBPS" --argjson rx_latency_ms "$RX_LATENCY_MS" \
+  --arg nakreport "${NAKREPORT:-default}" --arg lossmaxttl "${LOSSMAXTTL:-default}" \
+  --arg reorderfreeze "${REORDERFREEZE:-default}" --arg netem_seed "${NETEM_SEED:-none}" \
+  --argjson ts_sync_errors "$ts_sync" --argjson ts_cc_errors "$ts_cc" \
+  --argjson ts_packets "$ts_pkts" --argjson pkt_rcv_loss "$pkt_loss" \
+  --argjson pkt_rcv_drop "$pkt_drop" --argjson pkt_retrans "$pkt_retr" \
+  --argjson goodput_bps "$goodput" --argjson wire_bytes "$wire_bytes" \
+  --argjson wire_amp "$wire_amp" \
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{
-    scenario:"reorder-stress", pass:$pass,
+    scenario:"reorder-stress", pass:$pass, profile:$profile,
     criteria:{handshake_ok:$handshake_ok, bytes_ok:$bytes_ok,
               disconnects_ok:$disc_ok, duration_ok:$duration_ok,
               reorder_active:$reorder_active},
     establish:{handshake:$handshake_ok, both_links_added:$both_links_added},
+    config:{bitrate_kbps:$bitrate_kbps, rx_latency_ms:$rx_latency_ms,
+            nakreport:$nakreport, lossmaxttl:$lossmaxttl,
+            reorderfreeze:$reorderfreeze, netem_seed:$netem_seed},
     sink:{bytes_received:$bytes, disconnects:$disconnects, duration_s:$duration_s,
           libsrt_version:$libsrt, libsrt_path:$sink_libsrt_path,
           extra_args:$sink_extra_args},
+    metrics:{goodput_bps:$goodput_bps, wire_bytes:$wire_bytes, wire_amp:$wire_amp,
+             ts_packets:$ts_packets, ts_sync_errors:$ts_sync_errors,
+             ts_cc_errors:$ts_cc_errors, pkt_rcv_loss:$pkt_rcv_loss,
+             pkt_rcv_drop:$pkt_rcv_drop, pkt_retrans:$pkt_retrans},
     reorder:{configured:$reorder_configured, phase_ii_pkts:$reorder_pkts,
              fast_delay_ms:$delay_a_ms, slow_delay_ms:$delay_b_ms,
              slow_link_pkts:$band_b_pkts},
@@ -412,12 +506,16 @@ jq -n \
 # so `grep -E 'bytes_received=[0-9]+ disconnects=0'` matches on a PASS run).
 log ""
 log "reorder-stress: bytes_received=${bytes} disconnects=${disc} duration=${duration_s}s libsrt=${libsrt_ver} reorder_pkts=${reorder_pkts} slow_link_pkts=${band_b_pkts}"
+log "reorder-stress[ab]: profile=${PROFILE_LABEL} goodput_bps=${goodput} wire_amp=${wire_amp} ts_sync_errors=${ts_sync} ts_cc_errors=${ts_cc} pkt_rcv_drop=${pkt_drop} pkt_retrans=${pkt_retr}"
 log ""
 log "================ reorder-stress summary ================"
+log "  profile=${PROFILE_LABEL} bitrate=${BITRATE_KBPS}k rx_latency=${RX_LATENCY_MS}ms"
+log "  recipe: nakreport=${NAKREPORT:-default} lossmaxttl=${LOSSMAXTTL:-default} reorderfreeze=${REORDERFREEZE:-default} seed=${NETEM_SEED:-none}"
 log "  handshake_ok=${handshake_ok} (both_links_added=${both_links_added})"
 log "  bytes_ok=${bytes_ok} (bytes=${bytes} >= 5000) disc_ok=${disc_ok} (disc=${disc})"
 log "  duration_ok=${duration_ok} (duration=${duration_s}s >= 30)"
 log "  reorder_active=${reorder_active} (configured=${reorder_configured} phase_ii_pkts=${reorder_pkts})"
+log "  equal-gate signal: goodput_bps=${goodput} wire_amp=${wire_amp} ts_sync=${ts_sync} ts_cc=${ts_cc} pkt_drop=${pkt_drop} pkt_retrans=${pkt_retr}"
 log "  libsrt=${libsrt_ver} loader=${SINK_RESOLVED:-<system default>}"
 log "  result: ${RESULT_JSON}"
 log "======================================================="

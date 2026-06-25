@@ -112,6 +112,57 @@ tests/compat/run-matrix.sh --tier blocking                         # whole tier
 - Both tiers (blocking and informational) gate PR CI; only the weekly upstream-drift
   job (unpinned HEADs) is non-blocking.
 
+### srt-sink extended metrics
+
+`tests/compat/srt-sink/` is the mock SRT receiver used by the compat harness. Beyond the original 4 frozen keys (`bytes_received`, `disconnects`, `handshake_ms`, `error`), `srt-sink` now emits 6 additional keys in `result.json`:
+
+| Key | Source | Description |
+|-----|--------|-------------|
+| `ts_packets` | `ts_continuity.h` | Total 188-byte TS packets received |
+| `ts_sync_errors` | `ts_continuity.h` | Packets whose first byte is not `0x47` |
+| `ts_cc_errors` | `ts_continuity.h` | Continuity-counter discontinuities (excl. null PID 0x1FFF and adaptation-field `discontinuity_indicator`) |
+| `pkt_rcv_loss` | `srt_bstats` `pktRcvLossTotal` | SRT-level receive loss (cumulative, summed across reconnects) |
+| `pkt_rcv_drop` | `srt_bstats` `pktRcvDropTotal` | SRT-level receive drop (too-late packets) |
+| `pkt_retrans` | `srt_bstats` `pktRetransTotal` | SRT-level retransmissions |
+
+The TS parser lives in `srt-sink/ts_continuity.h` (header-only, dependency-free). It reassembles 188-byte packets across `srt_recv` boundaries, tracks per-PID continuity counters, and excludes null PID `0x1FFF` and adaptation-only packets from CC checks. Unit tests: `srt-sink/ts_continuity_test.cpp` (registered as ctest `ts-continuity` in `srt-sink/CMakeLists.txt`).
+
+**`--retransmitalgo 0|1`** — new `srt-sink` flag. Sets `SRTO_RETRANSMITALGO` on the listener (pre-bind, inherited by accepted sockets). `0` = always retransmit on NAK; `1` = selective retransmit (default SRT behavior).
+
+**`--packetfilter <str>`** — new `srt-sink` flag. Sets `SRTO_PACKETFILTER` on the listener (pre-bind, inherited by accepted sockets). The accepted socket's negotiated filter is written to `result.json` as `"packetfilter"` (non-empty = FEC negotiated; `""` = responder cleared the filter).
+
+**`--reorderfreeze 0|1`** — new `srt-sink` flag. Sets `SRTO_REORDERFREEZE` via the raw numeric opt id `(SRT_SOCKOPT)120` so it compiles against any libsrt version. Reports `reorderfreeze=on|off|unsupported` in the startup banner.
+
+### Profile validation A/B matrix
+
+`tests/compat/scenarios/profile-validation-matrix.sh` is the A/B orchestrator for the four non-FEC receive profiles. It runs paired alternating reps (baseline patched libsrt vs freeze profile) under netem reorder stress and gates on six quality clauses:
+
+1. `disconnects == 0` (both arms)
+2. `ts_sync_errors == 0` (profile arm)
+3. `ts_cc_errors <= baseline median`
+4. `median goodput >= 99% baseline`
+5. `p95 pkt_rcv_drop <= baseline`
+6. `wire_amp <= 1.10× baseline median` (wire bytes / bytes_received)
+
+Registered in `matrix.yaml` as scenario `profile-validation-matrix` (tier: blocking, privileged: true). Run manually via `tests/compat/run-matrix.sh --tier blocking`. Results: all four non-FEC profiles (Balanced/Low-Latency/Resilient/Classic) PASS all six clauses; wire amplification ratios 1.054–1.078× (well under 1.10×). Evidence: `test-results/srt-receive-profiles/task-6-srt-receive-profiles.json`.
+
+The `reorder-stress.sh` scenario is parameterized (BITRATE_KBPS, RX_LATENCY_MS, NAKREPORT, LOSSMAXTTL, REORDERFREEZE, PROFILE_LABEL, NETEM_SEED) and now emits TS-continuity + SRT counters + `goodput_bps` + `wire_amp` into `result.json`. Default run is byte-identical to the pre-matrix behavior (Rule E).
+
+### FEC connect-matrix
+
+`tests/compat/scenarios/fec-connect-matrix.sh` proves the one-sided FEC packet-filter negotiation behavior (direct SRT loopback; SRTLA is transparent UDP so negotiation is SRT-level). Four cases:
+
+| Case | Caller filter | Listener filter | Result |
+|------|--------------|-----------------|--------|
+| (a) | FEC full config | `fec` (accept-form) | FEC negotiated — `packetfilter` non-empty |
+| (b) | plain (no filter) | `fec` (accept-form) | PLAIN — responder clears filter, `packetfilter=""` |
+| (c) | FEC full config | conflicting `fec,cols:20,rows:20` | HARD REJECT `SRT_REJ_FILTER` — `bytes_received=0` |
+| (d) | FEC full config | no filter | ADOPTED — listener adopts caller config (informational) |
+
+Cases (a)/(b)/(c) are gated; (d) is informational. Registered in `matrix.yaml` as scenario `fec-connect-matrix`. See `docs/COMPATIBILITY.md §6` for the full mechanism and empirical results.
+
+**Key finding:** a listener with NO `packetfilter` does NOT reject a FEC caller — it adopts the caller's config (SRT `checkApplyFilterConfig` "good deal" else-branch). The genuine `SRT_REJ_FILTER` hard reject is a filter-config CONFLICT, not the absence of a filter. This is why L1 in `irl-srt-server` uses the accept-form `"fec"` and serves both FEC and non-FEC callers on the same port.
+
 ## COMPATIBILITY TESTING
 
 The compat matrix (`tests/compat/matrix.yaml`) registers every tested sender/receiver

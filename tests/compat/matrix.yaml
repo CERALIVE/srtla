@@ -269,6 +269,72 @@ scenarios:
       precedent), end-to-end SRT `disconnects` is recorded but is NOT a pass
       gate for the isolation phase. Unprivileged: netem_require exits 77 (SKIP).
 
+  - name: ts-continuity-loopback
+    script: tests/compat/scenarios/ts-continuity-loopback.sh
+    requires: srt-live-transmit
+    skip_exit: 3
+    gated_on_disconnects: false
+    proves: >-
+      Real-SRT loopback over 127.0.0.1 proving srt-sink's MPEG-TS continuity
+      metric is correct AND falsifiable: a clean transport stream sent raw
+      yields ts_sync_errors==0 and ts_cc_errors==0, while the SAME TS with one
+      payload-bearing packet excised yields ts_cc_errors>0. Raw byte passthrough
+      (srt-live-transmit, NOT ffmpeg — which re-muxes the container and would
+      heal the injected drop) preserves the continuity break end-to-end; the
+      send is paced to ~real time and null-padded to a whole SRT chunk so the
+      live socket neither drops nor zero-pads into spurious sync errors.
+      Unprivileged; SKIPs (exit 3) without srt-live-transmit. Integration
+      companion to the hermetic `ts-continuity` ctest (same proof, no network).
+
+  - name: fec-connect-matrix
+    script: tests/compat/scenarios/fec-connect-matrix.sh
+    requires: srt-live-transmit
+    skip_exit: 3
+    gated_on_disconnects: false
+    proves: >-
+      SRT one-sided packet-filter (FEC) connect negotiation against a single
+      fec-accept listener (srt-sink --packetfilter fec), the receiver profile
+      (L1) that device FEC senders ride. Reads the negotiated SRTO_PACKETFILTER
+      off the accepted socket from srt-sink's result JSON. (a) a full-config FEC
+      caller negotiates FEC: the accepted socket reports a non-empty merged
+      config and bytes flow. (b) a plain caller against the SAME listener
+      connects PLAIN: the responder clears the filter per-connection (accepted
+      SRTO_PACKETFILTER empty), bytes flow, NOT rejected — proving ONE fec-accept
+      listener serves both FEC and non-FEC senders, so no separate FEC port is
+      needed. (c) an irreconcilable listener filter config HARD-REJECTS with
+      SRT_REJ_FILTER (caller logs ERROR:FILTER, sink accepts nothing, 0 bytes).
+      Falsifiable: (a) and (b) share the identical listener yet must report
+      opposite filter results. Also records (informational, not gated) that a
+      no-filter listener ADOPTS a FEC caller's config (good-deal) rather than
+      rejecting — the reject boundary is a config CONFLICT, not the absence of a
+      filter. Unprivileged; SKIPs (exit 3) without srt-live-transmit.
+
+  - name: profile-validation-matrix
+    script: tests/compat/scenarios/profile-validation-matrix.sh
+    tier: blocking
+    privileged: true
+    notes: >-
+      A/B validation matrix: the 4 NON-FEC receive profiles vs the patched-libsrt
+      baseline under cross-link reorder stress, judged on srt-sink TS-continuity
+      (Task 5), NOT a bytes-only proxy. Drives scenarios/reorder-stress.sh paired/
+      alternating (shared per-rep netem seed) and swaps libsrt under srt-sink: the
+      profile arm = the reorderfreeze-1.5.5 build (opt-in SRTO_REORDERFREEZE via
+      srt-sink --reorderfreeze) plus the recipe flags; the baseline arm = the
+      patched CERALIVE/srt build (unconditional BELABOX merge, no flag). Profile
+      pairs (each freeze-arm vs its paired baseline at matched latency/bitrate/
+      seed): Balanced freeze+NAK @1500ms, Low-Latency freeze+NAK @250ms, Resilient
+      freeze+NAK @3500ms, Classic freeze+NAK-off @800ms. EQUAL gate per pair:
+      disconnects==0, ts_sync_errors==0, ts_cc_errors<=baseline, median goodput>=
+      99% baseline, p95 late-drop<=baseline, wire-amplification<=1.10x baseline.
+      Plus a regression-validation cell (Balanced NAK-on vs baseline @{500,1500,
+      3500}ms) and a LOSSMAXTTL sweep axis {30,200,1000} to pick the cap. Blocking
+      verdict = all 4 non-FEC profiles PASS AND the regression cell PASSes; the
+      sweep + a stock-decay control arm are informational/falsifiability. FEC
+      scope: the Low-Latency+FEC row is gated separately (fec-connect-matrix).
+      Builds the two libsrt via lib/build-libsrt-matrix.sh if absent; evidence
+      table -> test-results/srt-receive-profiles/task-6-srt-receive-profiles.json.
+      Unprivileged: netem.sh `require` exits 77 (SKIP).
+
 excluded:
   - name: moblink-rust
     repo: https://github.com/datagutt/moblink-rust
