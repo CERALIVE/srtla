@@ -67,6 +67,12 @@ uint64_t now_ms() {
          (static_cast<uint64_t>(ts.tv_nsec) / 1000000ULL);
 }
 
+// Referenced by numeric id, not the SRTO_REORDERFREEZE symbol: that enum is
+// absent from stock libsrt headers, so the id keeps srt-sink compiling against
+// any system libsrt. The set only takes effect against the freeze build; on
+// vanilla/patched libsrt the call fails and is reported "unsupported", never fatal.
+constexpr int kSrtoReorderFreeze = 120;
+
 struct Options {
   int port = 4001;
   std::string host = "0.0.0.0";
@@ -76,6 +82,7 @@ struct Options {
   int nakreport = -1;
   int lossmaxttl = -1;
   int retransmitalgo = -1;
+  int reorderfreeze = -1;
   std::string packetfilter;
 };
 
@@ -155,6 +162,14 @@ bool parse_args(int argc, char **argv, Options &opt) {
       opt.retransmitalgo = std::atoi(v);
       if (opt.retransmitalgo != 0 && opt.retransmitalgo != 1) {
         std::fprintf(stderr, "srt-sink: --retransmitalgo must be 0 or 1\n");
+        return false;
+      }
+    } else if (a == "--reorderfreeze") {
+      const char *v = need("--reorderfreeze");
+      if (!v) return false;
+      opt.reorderfreeze = std::atoi(v);
+      if (opt.reorderfreeze != 0 && opt.reorderfreeze != 1) {
+        std::fprintf(stderr, "srt-sink: --reorderfreeze must be 0 or 1\n");
         return false;
       }
     } else if (a == "--packetfilter") {
@@ -294,6 +309,12 @@ int main(int argc, char **argv) {
     srt_setsockflag(listener, SRTO_RETRANSMITALGO, &opt.retransmitalgo,
                     sizeof(opt.retransmitalgo));
   }
+  int reorderfreeze_applied = -1;
+  if (opt.reorderfreeze >= 0) {
+    int rc = srt_setsockflag(listener, static_cast<SRT_SOCKOPT>(kSrtoReorderFreeze),
+                             &opt.reorderfreeze, sizeof(opt.reorderfreeze));
+    reorderfreeze_applied = (rc == 0) ? 1 : 0;
+  }
 
   if (!opt.packetfilter.empty()) {
     if (srt_setsockflag(listener, SRTO_PACKETFILTER, opt.packetfilter.c_str(),
@@ -345,11 +366,19 @@ int main(int argc, char **argv) {
   uint32_t minor = (srt_version >> 16) & 0xFF;
   uint32_t patch = (srt_version >> 8) & 0xFF;
   std::fprintf(stderr, "srt-sink: libsrt version %u.%u.%u\n", major, minor, patch);
-  std::fprintf(stderr, "srt-sink: nakreport=%s lossmaxttl=%s retransmitalgo=%s\n",
+  const char *reorderfreeze_str =
+      opt.reorderfreeze < 0
+          ? "default"
+          : (reorderfreeze_applied == 1 ? (opt.reorderfreeze ? "on" : "off")
+                                        : "unsupported");
+  std::fprintf(stderr,
+               "srt-sink: nakreport=%s lossmaxttl=%s retransmitalgo=%s "
+               "reorderfreeze=%s\n",
                opt.nakreport < 0 ? "default" : (opt.nakreport ? "on" : "off"),
                opt.lossmaxttl < 0 ? "default" : std::to_string(opt.lossmaxttl).c_str(),
                opt.retransmitalgo < 0 ? "default"
-                                      : std::to_string(opt.retransmitalgo).c_str());
+                                      : std::to_string(opt.retransmitalgo).c_str(),
+               reorderfreeze_str);
   std::fprintf(stderr, "srt-sink: listening on %s:%d (latency %dms)\n",
                opt.host.c_str(), opt.port, opt.latency_ms);
   std::fprintf(stderr, "srt-sink: packetfilter=%s\n",

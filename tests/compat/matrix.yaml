@@ -309,6 +309,32 @@ scenarios:
       rejecting — the reject boundary is a config CONFLICT, not the absence of a
       filter. Unprivileged; SKIPs (exit 3) without srt-live-transmit.
 
+  - name: profile-validation-matrix
+    script: tests/compat/scenarios/profile-validation-matrix.sh
+    tier: blocking
+    privileged: true
+    notes: >-
+      A/B validation matrix: the 4 NON-FEC receive profiles vs the patched-libsrt
+      baseline under cross-link reorder stress, judged on srt-sink TS-continuity
+      (Task 5), NOT a bytes-only proxy. Drives scenarios/reorder-stress.sh paired/
+      alternating (shared per-rep netem seed) and swaps libsrt under srt-sink: the
+      profile arm = the reorderfreeze-1.5.5 build (opt-in SRTO_REORDERFREEZE via
+      srt-sink --reorderfreeze) plus the recipe flags; the baseline arm = the
+      patched CERALIVE/srt build (unconditional BELABOX merge, no flag). Profile
+      pairs (each freeze-arm vs its paired baseline at matched latency/bitrate/
+      seed): Balanced freeze+NAK @1500ms, Low-Latency freeze+NAK @250ms, Resilient
+      freeze+NAK @3500ms, Classic freeze+NAK-off @800ms. EQUAL gate per pair:
+      disconnects==0, ts_sync_errors==0, ts_cc_errors<=baseline, median goodput>=
+      99% baseline, p95 late-drop<=baseline, wire-amplification<=1.10x baseline.
+      Plus a regression-validation cell (Balanced NAK-on vs baseline @{500,1500,
+      3500}ms) and a LOSSMAXTTL sweep axis {30,200,1000} to pick the cap. Blocking
+      verdict = all 4 non-FEC profiles PASS AND the regression cell PASSes; the
+      sweep + a stock-decay control arm are informational/falsifiability. FEC
+      scope: the Low-Latency+FEC row is gated separately (fec-connect-matrix).
+      Builds the two libsrt via lib/build-libsrt-matrix.sh if absent; evidence
+      table -> test-results/srt-receive-profiles/task-6-srt-receive-profiles.json.
+      Unprivileged: netem.sh `require` exits 77 (SKIP).
+
 excluded:
   - name: moblink-rust
     repo: https://github.com/datagutt/moblink-rust
