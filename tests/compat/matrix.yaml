@@ -286,6 +286,29 @@ scenarios:
       Unprivileged; SKIPs (exit 3) without srt-live-transmit. Integration
       companion to the hermetic `ts-continuity` ctest (same proof, no network).
 
+  - name: fec-connect-matrix
+    script: tests/compat/scenarios/fec-connect-matrix.sh
+    requires: srt-live-transmit
+    skip_exit: 3
+    gated_on_disconnects: false
+    proves: >-
+      SRT one-sided packet-filter (FEC) connect negotiation against a single
+      fec-accept listener (srt-sink --packetfilter fec), the receiver profile
+      (L1) that device FEC senders ride. Reads the negotiated SRTO_PACKETFILTER
+      off the accepted socket from srt-sink's result JSON. (a) a full-config FEC
+      caller negotiates FEC: the accepted socket reports a non-empty merged
+      config and bytes flow. (b) a plain caller against the SAME listener
+      connects PLAIN: the responder clears the filter per-connection (accepted
+      SRTO_PACKETFILTER empty), bytes flow, NOT rejected — proving ONE fec-accept
+      listener serves both FEC and non-FEC senders, so no separate FEC port is
+      needed. (c) an irreconcilable listener filter config HARD-REJECTS with
+      SRT_REJ_FILTER (caller logs ERROR:FILTER, sink accepts nothing, 0 bytes).
+      Falsifiable: (a) and (b) share the identical listener yet must report
+      opposite filter results. Also records (informational, not gated) that a
+      no-filter listener ADOPTS a FEC caller's config (good-deal) rather than
+      rejecting — the reject boundary is a config CONFLICT, not the absence of a
+      filter. Unprivileged; SKIPs (exit 3) without srt-live-transmit.
+
 excluded:
   - name: moblink-rust
     repo: https://github.com/datagutt/moblink-rust

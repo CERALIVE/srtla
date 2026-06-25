@@ -192,7 +192,59 @@ The CeraLive stack uses two patched libsrt forks (CERALIVE/srt for the device im
 
 ---
 
-## 6. ENABLE_ALGO_COMPARISON Decision
+## 6. SRT FEC Connect-Matrix (one-sided packet-filter negotiation)
+
+FEC is an **SRT-level** feature: `SRTO_PACKETFILTER=fec` is negotiated in the SRT
+handshake, end-to-end between the caller and the listener. SRTLA underneath is a
+transparent UDP relay and does not touch it — so a FEC stream "rides" whichever
+SRT listener it terminates on. The receive-profile design uses one **fec-accept**
+listener (L1, `SRTO_PACKETFILTER=fec` — just the type) for device senders. This
+matrix proves that one such listener serves both FEC and non-FEC senders, and
+where the negotiation actually hard-fails.
+
+The caller is the device (initiator); the listener is the cloud receiver
+(responder). Filter strings: a full-config FEC sender is
+`fec,layout:staircase,rows:10,cols:10,arq:onreq`; the fec-accept listener is just
+`fec`.
+
+| # | Caller (sender) | Listener config | Result | Negotiated `SRTO_PACKETFILTER` on accepted socket |
+|---|---|---|---|---|
+| a | FEC (full config) | `fec` (fec-accept) | **Connect — FEC negotiated** | non-empty (merged config) |
+| b | plain (no filter) | `fec` (fec-accept) | **Connect — PLAIN** (responder clears it per-connection) | empty `""` |
+| c | FEC (full config) | conflicting `fec,…` (incompatible dims) | **HARD REJECT — `SRT_REJ_FILTER`** | n/a (no accept, 0 bytes) |
+| d | FEC (full config) | *no packetfilter* (empty) | **Connect — FEC adopted** by the listener ("good deal") | non-empty (caller's config) |
+
+**Why case (b) means no separate FEC listener is needed.** A listener that set a
+filter the caller never requested does not reject — the responder branch in
+`srtcore/core.cpp` (`checkApplyFilterConfig` + the post-handshake check "agent has
+configured packetfilter, but peer didn't request it") **clears** the filter for
+that one connection and connects plain. So the single fec-accept L1 accepts a FEC
+device (case a, full negotiation) **and** a non-FEC sender such as BELABOX
+(case b, cleared per-connection). One listener, both senders — no second FEC port.
+
+**Where the reject boundary actually is.** The genuine `SRT_REJ_FILTER` hard
+reject (case c) is a filter-config **conflict**, *not* the mere absence of a
+filter. A listener with **no** packetfilter does **not** reject a FEC caller — it
+takes the caller's config as a "good deal" and runs FEC anyway (case d). This
+corrects the earlier mental model that a "non-FEC listener" would reject a FEC
+sender: on a packet-filter-capable libsrt (≥ 1.4.0; system libsrt 1.5.x) absence
+is permissive (adopt), and only an irreconcilable config closes the connection.
+The one-sided config rule is documented upstream in
+[`srt/docs/features/packet-filtering-and-fec.md`](https://github.com/Haivision/srt/blob/master/docs/features/packet-filtering-and-fec.md)
+("one party defines the full configuration while the other only defines the
+matching packet filter type … if the options specified are in conflict, the
+connection will be rejected").
+
+This matrix is exercised end-to-end by the
+[`fec-connect-matrix`](../tests/compat/scenarios/fec-connect-matrix.sh) harness
+scenario, which drives a real FEC/plain SRT caller into `srt-sink --packetfilter`
+and asserts the negotiated filter the sink reads off each accepted socket
+(`"packetfilter"` in the result JSON). Cases (a)+(b)+(c) gate the scenario;
+case (d) is recorded as an informational observation.
+
+---
+
+## 7. ENABLE_ALGO_COMPARISON Decision
 
 `ENABLE_ALGO_COMPARISON` is defined in `src/receiver_config.h` with a default of `1`:
 
@@ -213,7 +265,7 @@ Changing this default requires a deliberate ADR, not a drive-by edit.
 
 ---
 
-## 7. Maintenance Policy
+## 8. Maintenance Policy
 
 ### Pin refresh
 When a Tier 1 or Tier 2 implementation cuts a new release, update the pin in

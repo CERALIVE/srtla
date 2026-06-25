@@ -7,7 +7,8 @@
 //
 //   {"bytes_received": N, "first_byte_ms": M, "disconnects": D, "duration_ms": T,
 //    "ts_packets": P, "ts_sync_errors": S, "ts_cc_errors": C,
-//    "pkt_rcv_loss": L, "pkt_rcv_drop": D2, "pkt_retrans": R}
+//    "pkt_rcv_loss": L, "pkt_rcv_drop": D2, "pkt_retrans": R,
+//    "packetfilter": "<negotiated SRTO_PACKETFILTER on the accepted socket>"}
 //
 //   bytes_received  total SRT payload bytes delivered by srt_recv
 //   first_byte_ms   ms from sink start to the first delivered byte (-1 if none)
@@ -20,6 +21,12 @@
 //   pkt_rcv_loss    SRT srt_bstats pktRcvLossTotal (cumulative, summed/conn)
 //   pkt_rcv_drop    SRT srt_bstats pktRcvDropTotal (too-late-to-play drops)
 //   pkt_retrans     SRT srt_bstats pktRetransTotal (retransmitted packets)
+//   packetfilter    the SRTO_PACKETFILTER value negotiated on the accepted data
+//                   socket (read after srt_accept). Empty when no filter is in
+//                   effect for the connection. With --packetfilter set, this is
+//                   how the FEC connect-matrix proves one-sided negotiation: a
+//                   FEC caller yields a non-empty merged config; a plain caller
+//                   yields "" because the responder clears the filter per-conn.
 //
 // The ts_* keys quantify transport-stream integrity (a spurious-retransmit or
 // loss profile shows up as cc_errors + SRT loss/retrans counters); the existing
@@ -69,6 +76,7 @@ struct Options {
   int nakreport = -1;
   int lossmaxttl = -1;
   int retransmitalgo = -1;
+  std::string packetfilter;
 };
 
 // All counters the sink reports. The leading four are the original, frozen
@@ -84,13 +92,14 @@ struct Result {
   uint64_t pkt_rcv_loss = 0;
   uint64_t pkt_rcv_drop = 0;
   uint64_t pkt_retrans = 0;
+  std::string packetfilter;
 };
 
 void usage(const char *argv0) {
   std::fprintf(stderr,
                "usage: %s --port P --result FILE [--host H] [--latency MS] "
                "[--duration SEC] [--nakreport 0|1] [--lossmaxttl N] "
-               "[--retransmitalgo 0|1]\n",
+               "[--retransmitalgo 0|1] [--packetfilter STR]\n",
                argv0);
 }
 
@@ -148,6 +157,14 @@ bool parse_args(int argc, char **argv, Options &opt) {
         std::fprintf(stderr, "srt-sink: --retransmitalgo must be 0 or 1\n");
         return false;
       }
+    } else if (a == "--packetfilter") {
+      const char *v = need("--packetfilter");
+      if (!v) return false;
+      opt.packetfilter = v;
+      if (opt.packetfilter.empty()) {
+        std::fprintf(stderr, "srt-sink: --packetfilter must be non-empty\n");
+        return false;
+      }
     } else if (a == "-h" || a == "--help") {
       usage(argv[0]);
       std::exit(0);
@@ -184,10 +201,11 @@ bool write_result(const std::string &path, const Result &r) {
                ", \"ts_packets\": %" PRIu64 ", \"ts_sync_errors\": %" PRIu64
                ", \"ts_cc_errors\": %" PRIu64 ", \"pkt_rcv_loss\": %" PRIu64
                ", \"pkt_rcv_drop\": %" PRIu64 ", \"pkt_retrans\": %" PRIu64
+               ", \"packetfilter\": \"%s\""
                "}\n",
                r.bytes_received, r.first_byte_ms, r.disconnects, r.duration_ms,
                r.ts_packets, r.ts_sync_errors, r.ts_cc_errors, r.pkt_rcv_loss,
-               r.pkt_rcv_drop, r.pkt_retrans);
+               r.pkt_rcv_drop, r.pkt_retrans, r.packetfilter.c_str());
   std::fflush(f);
   std::fclose(f);
   if (std::rename(tmp.c_str(), path.c_str()) != 0) {
@@ -277,6 +295,18 @@ int main(int argc, char **argv) {
                     sizeof(opt.retransmitalgo));
   }
 
+  if (!opt.packetfilter.empty()) {
+    if (srt_setsockflag(listener, SRTO_PACKETFILTER, opt.packetfilter.c_str(),
+                        static_cast<int>(opt.packetfilter.size())) == SRT_ERROR) {
+      std::fprintf(stderr, "srt-sink: SRTO_PACKETFILTER '%s' rejected: %s\n",
+                   opt.packetfilter.c_str(), srt_getlasterror_str());
+      srt_close(listener);
+      srt_cleanup();
+      flush();
+      return 1;
+    }
+  }
+
   struct sockaddr_in sa {};
   sa.sin_family = AF_INET;
   sa.sin_port = htons(static_cast<uint16_t>(opt.port));
@@ -322,6 +352,8 @@ int main(int argc, char **argv) {
                                       : std::to_string(opt.retransmitalgo).c_str());
   std::fprintf(stderr, "srt-sink: listening on %s:%d (latency %dms)\n",
                opt.host.c_str(), opt.port, opt.latency_ms);
+  std::fprintf(stderr, "srt-sink: packetfilter=%s\n",
+               opt.packetfilter.empty() ? "none" : opt.packetfilter.c_str());
 
   SRTSOCKET client = SRT_INVALID_SOCK;
   char buf[1500];
@@ -356,7 +388,18 @@ int main(int argc, char **argv) {
         srt_setsockflag(client, SRTO_RCVSYN, &cno, sizeof(cno));
         int cev = SRT_EPOLL_IN | SRT_EPOLL_ERR;
         srt_epoll_add_usock(eid, client, &cev);
-        std::fprintf(stderr, "srt-sink: accepted SRT caller\n");
+
+        // The packet-filter config negotiated for THIS connection: non-empty
+        // when FEC was agreed, "" when the responder cleared it (plain caller).
+        char pfbuf[512];
+        std::memset(pfbuf, 0, sizeof(pfbuf));
+        int pflen = static_cast<int>(sizeof(pfbuf));
+        if (srt_getsockflag(client, SRTO_PACKETFILTER, pfbuf, &pflen) == 0 &&
+            pflen > 0) {
+          res.packetfilter.assign(pfbuf, static_cast<size_t>(pflen));
+        }
+        std::fprintf(stderr, "srt-sink: accepted SRT caller (packetfilter='%s')\n",
+                     res.packetfilter.c_str());
         continue;
       }
 
