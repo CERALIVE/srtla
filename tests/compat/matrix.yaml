@@ -269,6 +269,23 @@ scenarios:
       precedent), end-to-end SRT `disconnects` is recorded but is NOT a pass
       gate for the isolation phase. Unprivileged: netem_require exits 77 (SKIP).
 
+  - name: ts-continuity-loopback
+    script: tests/compat/scenarios/ts-continuity-loopback.sh
+    requires: srt-live-transmit
+    skip_exit: 3
+    gated_on_disconnects: false
+    proves: >-
+      Real-SRT loopback over 127.0.0.1 proving srt-sink's MPEG-TS continuity
+      metric is correct AND falsifiable: a clean transport stream sent raw
+      yields ts_sync_errors==0 and ts_cc_errors==0, while the SAME TS with one
+      payload-bearing packet excised yields ts_cc_errors>0. Raw byte passthrough
+      (srt-live-transmit, NOT ffmpeg — which re-muxes the container and would
+      heal the injected drop) preserves the continuity break end-to-end; the
+      send is paced to ~real time and null-padded to a whole SRT chunk so the
+      live socket neither drops nor zero-pads into spurious sync errors.
+      Unprivileged; SKIPs (exit 3) without srt-live-transmit. Integration
+      companion to the hermetic `ts-continuity` ctest (same proof, no network).
+
 excluded:
   - name: moblink-rust
     repo: https://github.com/datagutt/moblink-rust

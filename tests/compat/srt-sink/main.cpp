@@ -1,15 +1,29 @@
 // srt-sink — minimal libsrt listener for the SRTLA compatibility harness.
 //
 // Accepts a single SRT caller (the media stream relayed end-to-end through
-// srtla_send -> srtla_rec), counts the application bytes it delivers, and on
-// exit writes a JSON result file the harness consumes:
+// srtla_send -> srtla_rec), counts the application bytes it delivers, inspects
+// the MPEG-TS it carries, and on exit writes a JSON result file the harness
+// consumes:
 //
-//   {"bytes_received": N, "first_byte_ms": M, "disconnects": D, "duration_ms": T}
+//   {"bytes_received": N, "first_byte_ms": M, "disconnects": D, "duration_ms": T,
+//    "ts_packets": P, "ts_sync_errors": S, "ts_cc_errors": C,
+//    "pkt_rcv_loss": L, "pkt_rcv_drop": D2, "pkt_retrans": R}
 //
 //   bytes_received  total SRT payload bytes delivered by srt_recv
 //   first_byte_ms   ms from sink start to the first delivered byte (-1 if none)
 //   disconnects     times an accepted connection broke mid-run (teardown excluded)
 //   duration_ms     ms the sink was alive (start -> exit)
+//   ts_packets      total 188-byte MPEG-TS packets seen in the payload
+//   ts_sync_errors  TS packets whose sync byte != 0x47
+//   ts_cc_errors    per-PID continuity-counter discontinuities (excludes null
+//                   PID 0x1FFF and the adaptation-field discontinuity_indicator)
+//   pkt_rcv_loss    SRT srt_bstats pktRcvLossTotal (cumulative, summed/conn)
+//   pkt_rcv_drop    SRT srt_bstats pktRcvDropTotal (too-late-to-play drops)
+//   pkt_retrans     SRT srt_bstats pktRetransTotal (retransmitted packets)
+//
+// The ts_* keys quantify transport-stream integrity (a spurious-retransmit or
+// loss profile shows up as cc_errors + SRT loss/retrans counters); the existing
+// keys are preserved unchanged so older harness readers keep working.
 //
 // It exits 0 on SIGTERM/SIGINT (clean teardown) or when --duration elapses, and
 // always flushes the JSON result first. This is a test helper, not production
@@ -30,6 +44,8 @@
 #include <cstring>
 #include <ctime>
 #include <string>
+
+#include "ts_continuity.h"
 
 namespace {
 
@@ -52,12 +68,29 @@ struct Options {
   int64_t duration_ms = 0;
   int nakreport = -1;
   int lossmaxttl = -1;
+  int retransmitalgo = -1;
+};
+
+// All counters the sink reports. The leading four are the original, frozen
+// schema; the rest are additive MPEG-TS / SRT telemetry (Task 5).
+struct Result {
+  uint64_t bytes_received = 0;
+  int64_t first_byte_ms = -1;
+  int disconnects = 0;
+  uint64_t duration_ms = 0;
+  uint64_t ts_packets = 0;
+  uint64_t ts_sync_errors = 0;
+  uint64_t ts_cc_errors = 0;
+  uint64_t pkt_rcv_loss = 0;
+  uint64_t pkt_rcv_drop = 0;
+  uint64_t pkt_retrans = 0;
 };
 
 void usage(const char *argv0) {
   std::fprintf(stderr,
                "usage: %s --port P --result FILE [--host H] [--latency MS] "
-               "[--duration SEC] [--nakreport 0|1] [--lossmaxttl N]\n",
+               "[--duration SEC] [--nakreport 0|1] [--lossmaxttl N] "
+               "[--retransmitalgo 0|1]\n",
                argv0);
 }
 
@@ -107,6 +140,14 @@ bool parse_args(int argc, char **argv, Options &opt) {
         std::fprintf(stderr, "srt-sink: --lossmaxttl must be non-negative\n");
         return false;
       }
+    } else if (a == "--retransmitalgo") {
+      const char *v = need("--retransmitalgo");
+      if (!v) return false;
+      opt.retransmitalgo = std::atoi(v);
+      if (opt.retransmitalgo != 0 && opt.retransmitalgo != 1) {
+        std::fprintf(stderr, "srt-sink: --retransmitalgo must be 0 or 1\n");
+        return false;
+      }
     } else if (a == "-h" || a == "--help") {
       usage(argv[0]);
       std::exit(0);
@@ -127,8 +168,9 @@ bool parse_args(int argc, char **argv, Options &opt) {
 }
 
 // Atomic-ish write: temp file + rename so a reader never sees a partial JSON.
-bool write_result(const std::string &path, uint64_t bytes_received,
-                  int64_t first_byte_ms, int disconnects, uint64_t duration_ms) {
+// The four original keys lead and are byte-for-byte unchanged; the ts_*/pkt_*
+// keys are appended (additive schema).
+bool write_result(const std::string &path, const Result &r) {
   std::string tmp = path + ".tmp";
   FILE *f = std::fopen(tmp.c_str(), "w");
   if (!f) {
@@ -138,8 +180,14 @@ bool write_result(const std::string &path, uint64_t bytes_received,
   }
   std::fprintf(f,
                "{\"bytes_received\": %" PRIu64 ", \"first_byte_ms\": %" PRId64
-               ", \"disconnects\": %d, \"duration_ms\": %" PRIu64 "}\n",
-               bytes_received, first_byte_ms, disconnects, duration_ms);
+               ", \"disconnects\": %d, \"duration_ms\": %" PRIu64
+               ", \"ts_packets\": %" PRIu64 ", \"ts_sync_errors\": %" PRIu64
+               ", \"ts_cc_errors\": %" PRIu64 ", \"pkt_rcv_loss\": %" PRIu64
+               ", \"pkt_rcv_drop\": %" PRIu64 ", \"pkt_retrans\": %" PRIu64
+               "}\n",
+               r.bytes_received, r.first_byte_ms, r.disconnects, r.duration_ms,
+               r.ts_packets, r.ts_sync_errors, r.ts_cc_errors, r.pkt_rcv_loss,
+               r.pkt_rcv_drop, r.pkt_retrans);
   std::fflush(f);
   std::fclose(f);
   if (std::rename(tmp.c_str(), path.c_str()) != 0) {
@@ -164,15 +212,37 @@ int main(int argc, char **argv) {
   signal(SIGPIPE, SIG_IGN);
 
   const uint64_t start_ms = now_ms();
-  uint64_t bytes_received = 0;
-  int64_t first_byte_ms = -1;
-  int disconnects = 0;
+  Result res;
+  tscont::Tracker ts;
+
+  // Snapshot a data socket's SRT loss/retrans counters into the running totals
+  // just before it is closed (cumulative *Total fields, summed across any
+  // reconnect). Best-effort: a fully torn-down socket may refuse srt_bstats.
+  auto accumulate_stats = [&](SRTSOCKET s) {
+    if (s == SRT_INVALID_SOCK) return;
+    SRT_TRACEBSTATS perf;
+    std::memset(&perf, 0, sizeof(perf));
+    if (srt_bstats(s, &perf, 0) != 0) return;
+    auto nn = [](int v) -> uint64_t {
+      return v > 0 ? static_cast<uint64_t>(v) : 0;
+    };
+    res.pkt_rcv_loss += nn(perf.pktRcvLossTotal);
+    res.pkt_rcv_drop += nn(perf.pktRcvDropTotal);
+    res.pkt_retrans += nn(perf.pktRetransTotal);
+  };
+
+  // Copy the live TS counters into res and write the JSON. Used by the
+  // early-return flush below and by the normal exit path.
+  auto publish = [&](uint64_t dur_ms) -> bool {
+    res.duration_ms = dur_ms;
+    res.ts_packets = ts.packets();
+    res.ts_sync_errors = ts.sync_errors();
+    res.ts_cc_errors = ts.cc_errors();
+    return write_result(opt.result_path, res);
+  };
 
   // Best-effort result on any early return so the harness always finds a file.
-  auto flush = [&]() {
-    write_result(opt.result_path, bytes_received, first_byte_ms, disconnects,
-                 now_ms() - start_ms);
-  };
+  auto flush = [&]() { publish(now_ms() - start_ms); };
 
   if (srt_startup() < 0) {
     std::fprintf(stderr, "srt-sink: srt_startup failed: %s\n", srt_getlasterror_str());
@@ -194,12 +264,17 @@ int main(int argc, char **argv) {
   srt_setsockflag(listener, SRTO_RCVSYN, &no, sizeof(no)); // non-blocking accept
   srt_setsockflag(listener, SRTO_RCVLATENCY, &opt.latency_ms, sizeof(opt.latency_ms));
 
-  // Apply optional libsrt evaluation flags
+  // Apply optional libsrt evaluation flags. These are pre-bind options on the
+  // listener and are inherited by the accepted data socket.
   if (opt.nakreport >= 0) {
     srt_setsockflag(listener, SRTO_NAKREPORT, &opt.nakreport, sizeof(opt.nakreport));
   }
   if (opt.lossmaxttl >= 0) {
     srt_setsockflag(listener, SRTO_LOSSMAXTTL, &opt.lossmaxttl, sizeof(opt.lossmaxttl));
+  }
+  if (opt.retransmitalgo >= 0) {
+    srt_setsockflag(listener, SRTO_RETRANSMITALGO, &opt.retransmitalgo,
+                    sizeof(opt.retransmitalgo));
   }
 
   struct sockaddr_in sa {};
@@ -240,9 +315,11 @@ int main(int argc, char **argv) {
   uint32_t minor = (srt_version >> 16) & 0xFF;
   uint32_t patch = (srt_version >> 8) & 0xFF;
   std::fprintf(stderr, "srt-sink: libsrt version %u.%u.%u\n", major, minor, patch);
-  std::fprintf(stderr, "srt-sink: nakreport=%s lossmaxttl=%s\n",
+  std::fprintf(stderr, "srt-sink: nakreport=%s lossmaxttl=%s retransmitalgo=%s\n",
                opt.nakreport < 0 ? "default" : (opt.nakreport ? "on" : "off"),
-               opt.lossmaxttl < 0 ? "default" : std::to_string(opt.lossmaxttl).c_str());
+               opt.lossmaxttl < 0 ? "default" : std::to_string(opt.lossmaxttl).c_str(),
+               opt.retransmitalgo < 0 ? "default"
+                                      : std::to_string(opt.retransmitalgo).c_str());
   std::fprintf(stderr, "srt-sink: listening on %s:%d (latency %dms)\n",
                opt.host.c_str(), opt.port, opt.latency_ms);
 
@@ -286,7 +363,8 @@ int main(int argc, char **argv) {
       if (s != client) continue;
 
       if (what & SRT_EPOLL_ERR) {
-        if (!g_stop) ++disconnects;
+        if (!g_stop) ++res.disconnects;
+        accumulate_stats(client);
         srt_epoll_remove_usock(eid, client);
         srt_close(client);
         client = SRT_INVALID_SOCK;
@@ -298,14 +376,17 @@ int main(int argc, char **argv) {
         for (;;) {
           int r = srt_recv(client, buf, sizeof(buf));
           if (r > 0) {
-            if (first_byte_ms < 0) {
-              first_byte_ms = static_cast<int64_t>(now_ms() - start_ms);
+            if (res.first_byte_ms < 0) {
+              res.first_byte_ms = static_cast<int64_t>(now_ms() - start_ms);
             }
-            bytes_received += static_cast<uint64_t>(r);
+            res.bytes_received += static_cast<uint64_t>(r);
+            ts.feed(reinterpret_cast<const uint8_t *>(buf),
+                    static_cast<size_t>(r));
             continue; // drain everything ready before re-polling
           }
           if (r == 0) {
-            if (!g_stop) ++disconnects;
+            if (!g_stop) ++res.disconnects;
+            accumulate_stats(client);
             srt_epoll_remove_usock(eid, client);
             srt_close(client);
             client = SRT_INVALID_SOCK;
@@ -315,7 +396,8 @@ int main(int argc, char **argv) {
           // r == SRT_ERROR
           int err = srt_getlasterror(nullptr);
           if (err == SRT_EASYNCRCV) break; // no more data right now
-          if (!g_stop) ++disconnects;
+          if (!g_stop) ++res.disconnects;
+          accumulate_stats(client);
           srt_epoll_remove_usock(eid, client);
           srt_close(client);
           client = SRT_INVALID_SOCK;
@@ -327,18 +409,31 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (client != SRT_INVALID_SOCK) srt_close(client);
+  if (client != SRT_INVALID_SOCK) {
+    accumulate_stats(client);
+    srt_close(client);
+  }
   srt_close(listener);
   srt_cleanup();
 
   const uint64_t duration_ms = now_ms() - start_ms;
+  res.duration_ms = duration_ms;
+  res.ts_packets = ts.packets();
+  res.ts_sync_errors = ts.sync_errors();
+  res.ts_cc_errors = ts.cc_errors();
   std::fprintf(stderr,
                "srt-sink: bytes=%" PRIu64 " first_byte_ms=%" PRId64
                " disconnects=%d duration_ms=%" PRIu64 "\n",
-               bytes_received, first_byte_ms, disconnects, duration_ms);
+               res.bytes_received, res.first_byte_ms, res.disconnects,
+               duration_ms);
+  std::fprintf(stderr,
+               "srt-sink: ts_packets=%" PRIu64 " ts_sync_errors=%" PRIu64
+               " ts_cc_errors=%" PRIu64 " pkt_rcv_loss=%" PRIu64
+               " pkt_rcv_drop=%" PRIu64 " pkt_retrans=%" PRIu64 "\n",
+               res.ts_packets, res.ts_sync_errors, res.ts_cc_errors,
+               res.pkt_rcv_loss, res.pkt_rcv_drop, res.pkt_retrans);
 
-  if (!write_result(opt.result_path, bytes_received, first_byte_ms, disconnects,
-                    duration_ms)) {
+  if (!write_result(opt.result_path, res)) {
     return 1;
   }
   return 0;

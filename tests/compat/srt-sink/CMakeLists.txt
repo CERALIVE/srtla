@@ -28,3 +28,14 @@ else()
   target_include_directories(srt-sink PRIVATE "${SRT_INCLUDE_DIR}")
   target_link_libraries(srt-sink PRIVATE "${SRT_LIBRARY}")
 endif()
+
+# Hermetic unit test for the MPEG-TS continuity tracker (ts_continuity.h) that
+# backs srt-sink's ts_packets / ts_sync_errors / ts_cc_errors metrics. It needs
+# no libsrt and no network — it injects a clean stream (cc_errors==0) and a
+# stream with a dropped packet (cc_errors>0), proving the metric is falsifiable.
+# Registered with ctest so the guarantee is checked on every compat-enabled
+# build (enable_testing() is set by the root CMakeLists under SRTLA_BUILD_TESTS).
+add_executable(ts-continuity-test ts_continuity_test.cpp)
+target_compile_features(ts-continuity-test PRIVATE cxx_std_17)
+target_compile_options(ts-continuity-test PRIVATE -Wall -Wextra)
+add_test(NAME ts-continuity COMMAND ts-continuity-test)
