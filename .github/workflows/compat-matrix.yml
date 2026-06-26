@@ -9,6 +9,11 @@ name: Compatibility Matrix
 #   * weekly drift    -> re-runs the informational tier against upstream HEADs,
 #                        purely to surface upstream divergence; never blocks
 #
+# Each tier fans out one job per pair (strategy.matrix from generate-matrix), so
+# the independent pairs run in parallel rather than as one long sequential job.
+# Per-tier gate jobs ("Blocking tier" / "Informational tier") aggregate the legs
+# back into a single, stable merge-gating status check.
+#
 # amd64 only — bonded UDP interop is exercised on a single ubuntu-latest host.
 
 on:
@@ -91,13 +96,19 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # --------------------------------------------------------------------- #
-  # Blocking tier — a failing pair fails the workflow.                     #
+  # Blocking tier — one job per pair, fanned out from matrix.yaml so the   #
+  # independent pairs run in parallel instead of one sequential job.       #
+  # fail-fast: false keeps every pair reporting; the compat-blocking-gate  #
+  # job below folds the legs into the single merge-gating status.          #
   # --------------------------------------------------------------------- #
   compat-blocking:
-    name: Blocking tier
+    name: "blocking: ${{ matrix.sender }} -> ${{ matrix.receiver }}"
     needs: generate-matrix
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.generate-matrix.outputs.blocking) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -115,25 +126,55 @@ jobs:
         with:
           tier: blocking
 
-      - name: Run blocking compatibility tier
-        run: tests/compat/run-matrix.sh --tier blocking --duration 20
+      - name: Run compatibility pair
+        run: >-
+          tests/compat/run-matrix.sh
+          --sender "${{ matrix.sender }}"
+          --receiver "${{ matrix.receiver }}"
+          --duration 20
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: compat-results-blocking
+          name: compat-results-blocking-${{ matrix.sender }}-x-${{ matrix.receiver }}
           path: tests/compat/results/**/result.json
           if-no-files-found: ignore
 
   # --------------------------------------------------------------------- #
-  # Informational tier — gates PRs (pinned SHAs; a failure is a regression). #
+  # Blocking gate — one stable status that fails if any blocking leg       #
+  # failed, so "a failing blocking pair fails this run" holds under one    #
+  # check name no matter how many pairs the matrix fans into.             #
+  # --------------------------------------------------------------------- #
+  compat-blocking-gate:
+    name: Blocking tier
+    needs: compat-blocking
+    if: always() && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all blocking pairs to pass
+        env:
+          RESULT: ${{ needs.compat-blocking.result }}
+        run: |
+          echo "blocking matrix result: $RESULT"
+          [ "$RESULT" = "success" ] || {
+            echo "::error title=Blocking tier::one or more blocking compat pairs failed ($RESULT)"
+            exit 1
+          }
+
+  # --------------------------------------------------------------------- #
+  # Informational tier — same per-pair fan-out (pinned SHAs; a failure is  #
+  # a regression). Only materializes when matrix.yaml has informational    #
+  # pairs (has_informational guard).                                       #
   # --------------------------------------------------------------------- #
   compat-informational:
-    name: Informational tier
+    name: "informational: ${{ matrix.sender }} -> ${{ matrix.receiver }}"
     needs: generate-matrix
     if: github.event_name != 'schedule' && needs.generate-matrix.outputs.has_informational == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.generate-matrix.outputs.informational) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -151,16 +192,45 @@ jobs:
         with:
           tier: informational
 
-      - name: Run informational compatibility tier
-        run: tests/compat/run-matrix.sh --tier informational --duration 20
+      - name: Run compatibility pair
+        run: >-
+          tests/compat/run-matrix.sh
+          --sender "${{ matrix.sender }}"
+          --receiver "${{ matrix.receiver }}"
+          --duration 20
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: compat-results-informational
+          name: compat-results-informational-${{ matrix.sender }}-x-${{ matrix.receiver }}
           path: tests/compat/results/**/result.json
           if-no-files-found: ignore
+
+  # --------------------------------------------------------------------- #
+  # Informational gate — stable status mirroring the blocking gate; passes #
+  # vacuously when no informational pairs are registered.                  #
+  # --------------------------------------------------------------------- #
+  compat-informational-gate:
+    name: Informational tier
+    needs: [generate-matrix, compat-informational]
+    if: always() && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all informational pairs to pass
+        env:
+          RESULT: ${{ needs.compat-informational.result }}
+          HAS_INFO: ${{ needs.generate-matrix.outputs.has_informational }}
+        run: |
+          echo "informational matrix result: $RESULT (has_informational=$HAS_INFO)"
+          if [ "$HAS_INFO" != "true" ]; then
+            echo "No informational pairs registered; nothing to gate."
+            exit 0
+          fi
+          [ "$RESULT" = "success" ] || {
+            echo "::error title=Informational tier::one or more informational compat pairs failed ($RESULT)"
+            exit 1
+          }
 
   # --------------------------------------------------------------------- #
   # pcap replay — runs only when an LFS fixture is present. Missing        #

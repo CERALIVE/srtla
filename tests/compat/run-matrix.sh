@@ -23,10 +23,18 @@
 #
 # Usage:
 #   run-matrix.sh --pair <sender>x<receiver> [options]
+#   run-matrix.sh --sender <name> --receiver <name> [options]
 #   run-matrix.sh --tier blocking|informational|all [options]
 #
 # Options:
-#   --pair <s>x<r>     Run a single pair by token (e.g. belabox-senderxours, oursxours).
+#   --pair <s>x<r>     Run a single pair by harness token (e.g. belabox-senderxours,
+#                      oursxours).
+#   --sender <name>    With --receiver: run a single pair addressed by its
+#   --receiver <name>  matrix.yaml names (e.g. --sender ceralive-srtla-send-rs
+#                      --receiver ours). This is the CI-matrix fan-out entry point —
+#                      the names map to harness tokens via the same table the --tier
+#                      path uses, so no token aliasing has to leak into the workflow.
+#                      Tier is resolved from matrix.yaml.
 #   --tier <t>         Run every matrix.yaml pair of tier blocking|informational|all.
 #   --scenario <name>  stream (default, healthy) | port-mismatch (negative/broken).
 #   --duration <sec>   Measurement window length (default 20).
@@ -62,6 +70,8 @@ now_ms() { date +%s%3N; }
 # --------------------------------------------------------------------------- #
 TIER=""
 PAIR=""
+SENDER_NAME=""
+RECEIVER_NAME=""
 SCENARIO="stream"
 DURATION=20
 KEEP_LOGS=0
@@ -71,17 +81,27 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --tier)      TIER="${2:?--tier needs a value}"; shift 2 ;;
     --pair)      PAIR="${2:?--pair needs a value}"; shift 2 ;;
+    --sender)    SENDER_NAME="${2:?--sender needs a value}"; shift 2 ;;
+    --receiver)  RECEIVER_NAME="${2:?--receiver needs a value}"; shift 2 ;;
     --scenario)  SCENARIO="${2:?--scenario needs a value}"; shift 2 ;;
     --duration)  DURATION="${2:?--duration needs a value}"; shift 2 ;;
     --keep-logs) KEEP_LOGS=1; shift ;;
     --build-dir) BUILD_DIR="${2:?--build-dir needs a value}"; shift 2 ;;
-    -h|--help)   sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)           die "unknown argument '$1' (try --help)" ;;
   esac
 done
 
-[[ -n "$TIER" || -n "$PAIR" ]] || die "specify --pair <s>x<r> or --tier <t>"
-[[ -z "$TIER" || -z "$PAIR" ]] || die "--pair and --tier are mutually exclusive"
+SELECT_BY_NAME=0
+[[ -n "$SENDER_NAME" || -n "$RECEIVER_NAME" ]] && SELECT_BY_NAME=1
+[[ "$SELECT_BY_NAME" -eq 0 || ( -n "$SENDER_NAME" && -n "$RECEIVER_NAME" ) ]] \
+  || die "--sender and --receiver must be given together"
+_modes=0
+[[ -n "$PAIR" ]]            && _modes=$((_modes + 1))
+[[ "$SELECT_BY_NAME" -eq 1 ]] && _modes=$((_modes + 1))
+[[ -n "$TIER" ]]           && _modes=$((_modes + 1))
+[[ "$_modes" -eq 1 ]] \
+  || die "specify exactly one of: --pair <s>x<r>, --sender <name> --receiver <name>, or --tier <t>"
 case "$SCENARIO" in stream|port-mismatch) ;; *) die "unknown --scenario '$SCENARIO'";; esac
 [[ "$DURATION" =~ ^[0-9]+$ && "$DURATION" -ge 1 ]] || die "--duration must be a positive integer"
 
@@ -456,7 +476,13 @@ run_pair() {
 declare -a JOBS
 add_job() { JOBS+=("$1|$2|$3"); }
 
-if [[ -n "$PAIR" ]]; then
+if [[ "$SELECT_BY_NAME" -eq 1 ]]; then
+  s="$(matrix_to_token "$SENDER_NAME")" \
+    || die "unknown matrix sender name '$SENDER_NAME' (see matrix.yaml senders:)"
+  r="$(matrix_to_token "$RECEIVER_NAME")" \
+    || die "unknown matrix receiver name '$RECEIVER_NAME' (see matrix.yaml receivers:)"
+  add_job "$s" "$r" "${PAIR_TIER["$s:$r"]:-blocking}"
+elif [[ -n "$PAIR" ]]; then
   read -r s r < <(split_pair "$PAIR") \
     || die "could not parse --pair '$PAIR' into known sender x receiver tokens"
   add_job "$s" "$r" "${PAIR_TIER["$s:$r"]:-blocking}"
