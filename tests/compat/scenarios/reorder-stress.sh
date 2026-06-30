@@ -80,6 +80,21 @@
 #                         the cross-link skew past the built-in 50/150ms band
 #                         (slow delay = 150 + RTT_SPREAD_MS). Empty = 150ms.
 #
+# FEC caller passthrough (FEC arms of the gain hunt). Empty default = today's
+# ffmpeg-direct SRT caller, byte-identical (Rule E):
+#   CALLER_PACKETFILTER   SRT FEC packet-filter config (must match `^fec,`). When
+#                         set, ffmpeg becomes the MPEG-TS generator and the SRT
+#                         caller is srt-live-transmit carrying `&packetfilter=<v>`
+#                         — because ffmpeg's libsrt wrapper has a fixed option
+#                         allow-list with NO `packetfilter` (appending it makes
+#                         ffmpeg HARD-FAIL "Option not found"), whereas
+#                         srt-live-transmit (libsrt 1.5.5) accepts it. Pair with a
+#                         FEC-accepting sink via SINK_EXTRA_ARGS="--packetfilter fec".
+#                         Requires srt-live-transmit on PATH (absent => SKIP, exit
+#                         77). Pure FEC (arq:never) is refused — FEC is always an
+#                         arq:onreq hybrid. The negotiated filter the sink accepted
+#                         is echoed to result.json as sink.negotiated_packetfilter.
+#
 # The recipe-shorthand maps to the 4 non-FEC receive profiles like so (see the
 # A/B driver scenarios/profile-validation-matrix.sh): freeze+NAK (Balanced /
 # Low-Latency / Resilient) = REORDERFREEZE=1 NAKREPORT=1; freeze+NAK-off
@@ -137,6 +152,7 @@ PORT_MISMATCH="${PORT_MISMATCH:-}"
 STEADY_LOSS_PCT="${STEADY_LOSS_PCT:-}"
 BURST_LOSS_PCT="${BURST_LOSS_PCT:-}"
 RTT_SPREAD_MS="${RTT_SPREAD_MS:-}"
+CALLER_PACKETFILTER="${CALLER_PACKETFILTER:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -158,10 +174,28 @@ done
 [[ -z "$STEADY_LOSS_PCT" || "$STEADY_LOSS_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "STEADY_LOSS_PCT must be a non-negative number"
 [[ -z "$BURST_LOSS_PCT" || "$BURST_LOSS_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "BURST_LOSS_PCT must be a non-negative number"
 [[ -z "$RTT_SPREAD_MS" || "$RTT_SPREAD_MS" =~ ^[0-9]+$ ]] || die "RTT_SPREAD_MS must be a non-negative integer"
+# CALLER_PACKETFILTER: empty = ffmpeg-direct caller (today's path). Set => FEC arm,
+# must be an SRT FEC packet-filter config (`fec,...`); pure FEC (arq:never) is BANNED
+# (FEC is always an arq:onreq hybrid here, per docs/RECEIVER-RECONCILIATION.md).
+if [[ -n "$CALLER_PACKETFILTER" ]]; then
+  [[ "$CALLER_PACKETFILTER" =~ ^fec, ]] || die "CALLER_PACKETFILTER must start with 'fec,' (got '$CALLER_PACKETFILTER')"
+  [[ "$CALLER_PACKETFILTER" == *arq:never* ]] && die "CALLER_PACKETFILTER must not use arq:never (pure FEC is BANNED)"
+fi
 
 for tool in ffmpeg jq; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool '$tool' not found in PATH"
 done
+
+# FEC caller needs srt-live-transmit (ffmpeg's libsrt wrapper has no packetfilter
+# option). SKIP-cleanly (exit 77, this scenario's SKIP convention) when the FEC
+# arm is requested but the transmitter is absent — falsifiable, never best-effort.
+if [[ -n "$CALLER_PACKETFILTER" ]] && ! command -v srt-live-transmit >/dev/null 2>&1; then
+  log "SKIP reorder-stress: CALLER_PACKETFILTER set but srt-live-transmit not in PATH (FEC caller needs it)"
+  mkdir -p "$RESULTS_DIR"
+  printf '{"scenario":"reorder-stress","skipped":true,"reason":"CALLER_PACKETFILTER set but srt-live-transmit absent"}\n' \
+    > "${RESULTS_DIR}/result.json"
+  exit 77
+fi
 
 # Capability gate — SKIP-PRIVILEGED (exit 77, the code netem_require returns and
 # the sibling netem scenarios use) if we cannot shape the network.
@@ -251,6 +285,7 @@ rm -rf "$RESULTS_DIR"; mkdir -p "$RESULTS_DIR"
 RX_LOG="${RESULTS_DIR}/receiver.log"
 TX_LOG="${RESULTS_DIR}/sender.log"
 FF_LOG="${RESULTS_DIR}/ffmpeg.log"
+SLT_LOG="${RESULTS_DIR}/srt-live-transmit.log"
 SINK_LOG="${RESULTS_DIR}/sink.log"
 SINK_JSON="${RESULTS_DIR}/sink.json"
 IPS_FILE="${RESULTS_DIR}/ips.txt"
@@ -392,11 +427,30 @@ SRT_OPTS="mode=caller&transtype=live&latency=${SRT_LATENCY_US}&peerlatency=${SRT
 # source so the mpeg2video encoder actually emits the requested multi-Mbps target.
 FF_SIZE=320x240; FF_RATE=25
 if [[ "$BITRATE_KBPS" -ge 4000 ]]; then FF_SIZE=1280x720; FF_RATE=30; fi
+if [[ -z "$CALLER_PACKETFILTER" ]]; then
+# Unset path: ffmpeg is the SRT caller directly. Kept byte-identical to the
+# pre-FEC form (Rule E) — see test-results/a2-rule-e-diff.txt.
 ffmpeg -hide_banner -loglevel warning -re \
   -f lavfi -i "testsrc2=size=${FF_SIZE}:rate=${FF_RATE}" -c:v mpeg2video -b:v "${BITRATE_KBPS}k" -f mpegts \
   "srt://127.0.0.1:${LOCAL_SRT_PORT}?${SRT_OPTS}" \
   >"$FF_LOG" 2>&1 &
 FF_PID=$!; track "$FF_PID"
+else
+  # FEC path: ffmpeg becomes the MPEG-TS generator (stdout); srt-live-transmit is
+  # the SRT caller carrying &packetfilter (libsrt 1.5.5, FEC-capable). $! is the
+  # tail of the pipe (srt-live-transmit); killing it SIGPIPEs ffmpeg on teardown.
+  # srt-live-transmit URI latency is in MILLISECONDS (ffmpeg's was microseconds),
+  # and `timeout` is an ffmpeg-only libsrt option — reusing $SRT_OPTS here would
+  # set an 800s buffer and deliver zero bytes, so build SRT options afresh in ms.
+  SLT_OPTS="mode=caller&transtype=live&latency=${SRT_LATENCY_MS}&peerlatency=${SRT_LATENCY_MS}&sndbuf=24000000"
+  ffmpeg -hide_banner -loglevel warning -re \
+    -f lavfi -i "testsrc2=size=${FF_SIZE}:rate=${FF_RATE}" -c:v mpeg2video -b:v "${BITRATE_KBPS}k" -f mpegts - \
+    2>"$FF_LOG" \
+    | srt-live-transmit -chunk:1316 "file://con" \
+        "srt://127.0.0.1:${LOCAL_SRT_PORT}?${SLT_OPTS}&packetfilter=${CALLER_PACKETFILTER}" \
+        >"$SLT_LOG" 2>&1 &
+  FF_PID=$!; track "$FF_PID"
+fi
 
 handshake=false
 wait_for_marker "$RX_LOG" "Group registered" 10 && handshake=true
@@ -490,6 +544,10 @@ wire_amp="$(awk -v w="$wire_bytes" -v b="$bytes" 'BEGIN{ printf "%.4f", (b>0 ? w
 libsrt_ver="$(sed -n 's/^srt-sink: libsrt version \([0-9.]*\).*/\1/p' "$SINK_LOG" 2>/dev/null | head -1)"
 [[ -n "$libsrt_ver" ]] || libsrt_ver="unknown"
 
+# Negotiated SRT packet-filter the sink accepted (non-empty => FEC was negotiated
+# end-to-end on the FEC arm; "" when the caller sent plain or the sink cleared it).
+negotiated_pf="$(jq -r '.packetfilter // ""' "$SINK_JSON" 2>/dev/null || echo "")"
+
 # --------------------------------------------------------------------------- #
 # Verdict (DEFAULT condition). A/B/C analysis is NOT decided here (Task 16).   #
 # --------------------------------------------------------------------------- #
@@ -523,6 +581,8 @@ jq -n \
   --arg reorderfreeze "${REORDERFREEZE:-default}" --arg netem_seed "${NETEM_SEED:-none}" \
   --arg steady_loss_pct "${STEADY_LOSS_PCT:-none}" --arg burst_loss_pct "${BURST_LOSS_PCT:-none}" \
   --arg rtt_spread_ms "${RTT_SPREAD_MS:-none}" \
+  --arg caller_packetfilter "${CALLER_PACKETFILTER:-none}" \
+  --arg negotiated_packetfilter "$negotiated_pf" \
   --argjson ts_sync_errors "$ts_sync" --argjson ts_cc_errors "$ts_cc" \
   --argjson ts_packets "$ts_pkts" --argjson pkt_rcv_loss "$pkt_loss" \
   --argjson pkt_rcv_drop "$pkt_drop" --argjson pkt_retrans "$pkt_retr" \
@@ -539,10 +599,10 @@ jq -n \
             nakreport:$nakreport, lossmaxttl:$lossmaxttl,
             reorderfreeze:$reorderfreeze, netem_seed:$netem_seed,
             steady_loss_pct:$steady_loss_pct, burst_loss_pct:$burst_loss_pct,
-            rtt_spread_ms:$rtt_spread_ms},
+            rtt_spread_ms:$rtt_spread_ms, caller_packetfilter:$caller_packetfilter},
     sink:{bytes_received:$bytes, disconnects:$disconnects, duration_s:$duration_s,
           libsrt_version:$libsrt, libsrt_path:$sink_libsrt_path,
-          extra_args:$sink_extra_args},
+          extra_args:$sink_extra_args, negotiated_packetfilter:$negotiated_packetfilter},
     metrics:{goodput_bps:$goodput_bps, wire_bytes:$wire_bytes, wire_amp:$wire_amp,
              ts_packets:$ts_packets, ts_sync_errors:$ts_sync_errors,
              ts_cc_errors:$ts_cc_errors, pkt_rcv_loss:$pkt_rcv_loss,
