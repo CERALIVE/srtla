@@ -114,7 +114,7 @@ tests/compat/run-matrix.sh --tier blocking                         # whole tier
 
 ### srt-sink extended metrics
 
-`tests/compat/srt-sink/` is the mock SRT receiver used by the compat harness. Beyond the original 4 frozen keys (`bytes_received`, `disconnects`, `handshake_ms`, `error`), `srt-sink` now emits 6 additional keys in `result.json`:
+`tests/compat/srt-sink/` is the mock SRT receiver used by the compat harness. Beyond the original 4 frozen keys (`bytes_received`, `disconnects`, `handshake_ms`, `error`), `srt-sink` now emits 9 additional keys in `result.json`:
 
 | Key | Source | Description |
 |-----|--------|-------------|
@@ -124,6 +124,9 @@ tests/compat/run-matrix.sh --tier blocking                         # whole tier
 | `pkt_rcv_loss` | `srt_bstats` `pktRcvLossTotal` | SRT-level receive loss (cumulative, summed across reconnects) |
 | `pkt_rcv_drop` | `srt_bstats` `pktRcvDropTotal` | SRT-level receive drop (too-late packets) |
 | `pkt_retrans` | `srt_bstats` `pktRetransTotal` | SRT-level retransmissions |
+| `nakreport_readback` | `srt_getsockflag` `SRTO_NAKREPORT` | NAK-report policy **negotiated** on the accepted socket (`-1` = unreadable) |
+| `lossmaxttl_readback` | `srt_getsockflag` `SRTO_LOSSMAXTTL` | reorder-tolerance ceiling negotiated on the accepted socket (`-1` = unreadable) |
+| `reorderfreeze_readback` | `srt_getsockflag` opt id `120` | decay-freeze flag negotiated on the accepted socket (`-1` = unreadable / stock libsrt) |
 
 The TS parser lives in `srt-sink/ts_continuity.h` (header-only, dependency-free). It reassembles 188-byte packets across `srt_recv` boundaries, tracks per-PID continuity counters, and excludes null PID `0x1FFF` and adaptation-only packets from CC checks. Unit tests: `srt-sink/ts_continuity_test.cpp` (registered as ctest `ts-continuity` in `srt-sink/CMakeLists.txt`).
 
@@ -132,6 +135,8 @@ The TS parser lives in `srt-sink/ts_continuity.h` (header-only, dependency-free)
 **`--packetfilter <str>`** — new `srt-sink` flag. Sets `SRTO_PACKETFILTER` on the listener (pre-bind, inherited by accepted sockets). The accepted socket's negotiated filter is written to `result.json` as `"packetfilter"` (non-empty = FEC negotiated; `""` = responder cleared the filter).
 
 **`--reorderfreeze 0|1`** — new `srt-sink` flag. Sets `SRTO_REORDERFREEZE` via the raw numeric opt id `(SRT_SOCKOPT)120` so it compiles against any libsrt version. Reports `reorderfreeze=on|off|unsupported` in the startup banner.
+
+**Sockopt read-back (`nakreport_readback` / `lossmaxttl_readback` / `reorderfreeze_readback`).** After `srt_accept`, `srt-sink` reads the three policy options back off the **accepted** socket via `srt_getsockflag` (`SRTO_NAKREPORT`, `SRTO_LOSSMAXTTL`, opt id `120`) and writes them to `result.json` — the **negotiated** values, not the requested ones the banner echoes. This is what lets a campaign measured via `srt-sink` flags prove it reproduces irl-srt-server's `kSrtProfileTable` (`SLSSrt.cpp`) L1/L2 tuples. The fidelity assertion `tests/compat/lib/srt-sink-proxy-fidelity.sh` runs the L1 `{freeze=1,nak=1,ttl=40}` and L2 `{freeze=1,nak=0,ttl=40}` flag sets, asserts the read-backs equal those tuples, and runs a falsifier (`--lossmaxttl 30` must FAIL the L2 ttl=40 check, proving the value is read back not echoed). Evidence: `test-results/srt-sink-proxy-fidelity.json` (gitignored).
 
 ### Profile validation A/B matrix
 

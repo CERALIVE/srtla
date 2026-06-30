@@ -8,7 +8,9 @@
 //   {"bytes_received": N, "first_byte_ms": M, "disconnects": D, "duration_ms": T,
 //    "ts_packets": P, "ts_sync_errors": S, "ts_cc_errors": C,
 //    "pkt_rcv_loss": L, "pkt_rcv_drop": D2, "pkt_retrans": R,
-//    "packetfilter": "<negotiated SRTO_PACKETFILTER on the accepted socket>"}
+//    "packetfilter": "<negotiated SRTO_PACKETFILTER on the accepted socket>",
+//    "nakreport_readback": NR, "lossmaxttl_readback": LT,
+//    "reorderfreeze_readback": RF}
 //
 //   bytes_received  total SRT payload bytes delivered by srt_recv
 //   first_byte_ms   ms from sink start to the first delivered byte (-1 if none)
@@ -100,6 +102,12 @@ struct Result {
   uint64_t pkt_rcv_drop = 0;
   uint64_t pkt_retrans = 0;
   std::string packetfilter;
+  // Negotiated policy read off the accepted socket (srt_getsockflag), NOT the
+  // requested values the banner echoes. -1 = the option could not be read (e.g.
+  // opt id 120 on a stock libsrt), kept distinct from a real 0.
+  int nakreport_readback = -1;
+  int lossmaxttl_readback = -1;
+  int reorderfreeze_readback = -1;
 };
 
 void usage(const char *argv0) {
@@ -217,10 +225,14 @@ bool write_result(const std::string &path, const Result &r) {
                ", \"ts_cc_errors\": %" PRIu64 ", \"pkt_rcv_loss\": %" PRIu64
                ", \"pkt_rcv_drop\": %" PRIu64 ", \"pkt_retrans\": %" PRIu64
                ", \"packetfilter\": \"%s\""
+               ", \"nakreport_readback\": %d, \"lossmaxttl_readback\": %d"
+               ", \"reorderfreeze_readback\": %d"
                "}\n",
                r.bytes_received, r.first_byte_ms, r.disconnects, r.duration_ms,
                r.ts_packets, r.ts_sync_errors, r.ts_cc_errors, r.pkt_rcv_loss,
-               r.pkt_rcv_drop, r.pkt_retrans, r.packetfilter.c_str());
+               r.pkt_rcv_drop, r.pkt_retrans, r.packetfilter.c_str(),
+               r.nakreport_readback, r.lossmaxttl_readback,
+               r.reorderfreeze_readback);
   std::fflush(f);
   std::fclose(f);
   if (std::rename(tmp.c_str(), path.c_str()) != 0) {
@@ -427,8 +439,27 @@ int main(int argc, char **argv) {
             pflen > 0) {
           res.packetfilter.assign(pfbuf, static_cast<size_t>(pflen));
         }
-        std::fprintf(stderr, "srt-sink: accepted SRT caller (packetfilter='%s')\n",
-                     res.packetfilter.c_str());
+
+        int rb = 0;
+        int rblen = static_cast<int>(sizeof(rb));
+        if (srt_getsockflag(client, SRTO_NAKREPORT, &rb, &rblen) == 0) {
+          res.nakreport_readback = rb;
+        }
+        rblen = static_cast<int>(sizeof(rb));
+        if (srt_getsockflag(client, SRTO_LOSSMAXTTL, &rb, &rblen) == 0) {
+          res.lossmaxttl_readback = rb;
+        }
+        rblen = static_cast<int>(sizeof(rb));
+        if (srt_getsockflag(client, static_cast<SRT_SOCKOPT>(kSrtoReorderFreeze),
+                            &rb, &rblen) == 0) {
+          res.reorderfreeze_readback = rb;
+        }
+        std::fprintf(stderr,
+                     "srt-sink: accepted SRT caller (packetfilter='%s' "
+                     "nakreport_readback=%d lossmaxttl_readback=%d "
+                     "reorderfreeze_readback=%d)\n",
+                     res.packetfilter.c_str(), res.nakreport_readback,
+                     res.lossmaxttl_readback, res.reorderfreeze_readback);
         continue;
       }
 
