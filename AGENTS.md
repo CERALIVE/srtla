@@ -285,10 +285,10 @@ the `ENABLE_ALGO_COMPARISON` legacy path / `legacy_weight_percent` are untouched
 
 Canonical decision record: [`docs/RECEIVER-RECONCILIATION.md`](../docs/RECEIVER-RECONCILIATION.md)
 
-**`lossmaxttl` calibration result (Task 1 A/B): winner = 40** (BellaBox parity).
+**`lossmaxttl` calibration result (Task 1 A/B): winner = 40** (BELABOX parity).
 
 Both arms (30 vs 40) tied at `pkt_rcv_drop=0`, `ts_cc_errors=0`, equal goodput. The
-pre-registered tie-break rule resolves to 40 (BellaBox parity / max compat). This value
+pre-registered tie-break rule resolves to 40 (BELABOX parity / max compat). This value
 is now locked into `irl-srt-server` L1 and L2 profiles (Task 4). Evidence:
 `test-results/srt-receive-profiles/lossmaxttl-3040.json`.
 

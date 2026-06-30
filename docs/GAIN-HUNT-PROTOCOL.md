@@ -5,7 +5,7 @@ campaign that decides whether any FEC packet-filter mixture earns a place in the
 operator-facing receiver-capability catalog.
 
 The catalog ships **empty**. Our shipping evidence is *parity*, not *gain* — the
-BellaBox-parity baseline (Classic L2 + latency, ARQ always on) is proven equal to
+BELABOX-parity baseline (Classic L2 + latency, ARQ always on) is proven equal to
 the patched libsrt, and nothing beyond it is earned yet. A mixture is added to the
 catalog **only** after this campaign produces evidence that clears the decision
 rule below. This document is the gate; running the harness is how a candidate
@@ -48,7 +48,7 @@ Two non-negotiable constraints frame every candidate (locked in
 ## 2. Pre-Registered Decision Rule — "real gain + no regression"
 
 Fixed **before** any measurement exists (mirroring ADR-002). A candidate mixture
-`C` is compared against the BellaBox-parity baseline `B` on a per-cell basis,
+`C` is compared against the BELABOX-parity baseline `B` on a per-cell basis,
 paired/alternating with a shared per-rep netem seed. `C` earns its catalog button
 **iff both halves hold**:
 
