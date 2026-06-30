@@ -16,10 +16,14 @@ tries to pass it.
 - **Harness scaffold:** [`../tests/compat/scenarios/gain-hunt-matrix.sh`](../tests/compat/scenarios/gain-hunt-matrix.sh) — orchestrator **stub** (this effort). It documents the rule and the matrix and **does not run the campaign** (R&D track).
 - **Measurement instrument:** [`../tests/compat/scenarios/reorder-stress.sh`](../tests/compat/scenarios/reorder-stress.sh) — the same A/B instrument the profile-validation matrix uses, now extended with the adverse-config axes below.
 
-> **Status:** SCAFFOLD. The decision rule and candidate matrix are fixed here and
-> in the stub; the full campaign (build/pin each FEC geometry, run the reps, do the
-> stats) is an explicit R&D track and is **not** wired. See "Running the Full
-> Campaign" for what implementing it entails.
+> **Status:** PARTIALLY WIRED. The decision rule and candidate matrix are fixed
+> here and in the orchestrator. The orchestrator now drives the instrument for a
+> `--smoke` cell and the `--stage screen` FEC×NAK×FREEZE recipe matrix (REORDERFREEZE
+> × NAKREPORT × FEC, baseline excluded → 7 candidates, `LOSSMAXTTL=40` held). The
+> deep adverse-axis + FEC-geometry sweep and the cross-cell Holm-Bonferroni stats
+> layer remain an explicit R&D track (`--stage deep`, T-A6). See "Running the Full
+> Campaign" for what completing it entails. The PRIMARY sender is `srtla-send-rs`;
+> a run with no fork resolvable SKIPs (exit 77).
 
 ---
 
@@ -74,6 +78,7 @@ In **every** cell:
 | TS continuity | `ts_cc_errors(C) ≤ ts_cc_errors(B)` (median) |
 | Goodput floor | `goodput_bps(C) ≥ 0.99 × goodput_bps(B)` (no goodput sold to buy drops) |
 | Wire overhead | `wire_amp(C) ≤ 1.10 × wire_amp(B)` (FEC overhead bounded — the point of `arq:onreq` over pure FEC is to pay parity bytes only when they buy a gain) |
+| Reverse overhead | `reverse_wire_amp(C) ≤ 1.10 × reverse_wire_amp(B)` (periodic-NAK's receiver→sender cost is bounded; the instrument meters `$PEERIF` egress inside the netns so this is no longer invisible) |
 | Tail latency | `p95 pkt_rcv_drop(C) ≤ p95 pkt_rcv_drop(B)` |
 
 ### Verdict
@@ -131,25 +136,34 @@ wide RTT spread stresses the bonded reassembly window.
 
 ---
 
-## 5. Using the Scaffold
+## 5. Using the Orchestrator
 
-The stub is falsifiable: it documents the protocol and **refuses to claim a gain**
-without measured evidence.
+The orchestrator is falsifiable: it REFUSES `arq:never` in every mode (exit 2) and
+**refuses to claim a gain** without the measured cross-cell campaign (exit 3).
 
 ```bash
 # Print the notice + matrix summary (exit 0):
 tests/compat/scenarios/gain-hunt-matrix.sh
 
-# Print the full planned campaign (exit 0):
+# Print the full 3-axis FEC×NAK×FREEZE matrix + each cell's SRTO tuple (exit 0):
 tests/compat/scenarios/gain-hunt-matrix.sh --dry-run
 
 # The decision rule + candidate matrix in full (exit 0):
 tests/compat/scenarios/gain-hunt-matrix.sh --help
 
-# Attempt to assert a gain — REFUSED (exit 3). A gain cannot be claimed by
-# running this stub; no measured candidate-vs-baseline evidence exists.
+# Run ONE paired cell (NAK-on candidate vs Classic baseline). Needs CAP_NET_ADMIN
+# and a resolvable srtla-send-rs; SKIPs (exit 77) otherwise.
+SRTLA_SEND_RS_BIN=/path/to/srtla_send_rs \
+  tests/compat/scenarios/gain-hunt-matrix.sh --smoke --duration 8
+
+# Run the full screen recipe matrix (7 candidate cells vs baseline):
+SRTLA_SEND_RS_BIN=/path/to/srtla_send_rs \
+  tests/compat/scenarios/gain-hunt-matrix.sh --stage screen --reps 6
+
+# Attempt to assert a gain — REFUSED (exit 3). A gain cannot be claimed by running
+# this script; only the cross-cell §2 stats (T-A6 deep stage) may.
 tests/compat/scenarios/gain-hunt-matrix.sh --claim-gain \
-    --candidate m-even-8x8 \
+    --candidate f1-n1-fec \
     --baseline tests/compat/results/.../result.json \
     --decision-rule docs/GAIN-HUNT-PROTOCOL.md
 ```
@@ -189,7 +203,10 @@ means wiring `gain-hunt-matrix.sh` to:
    profile matrix), passing the FEC packetfilter to `srt-sink` via `SINK_EXTRA_ARGS`
    `--packetfilter`.
 3. **Collect** `goodput_bps`, `pkt_rcv_drop`, `ts_sync_errors`, `ts_cc_errors`,
-   `wire_amp`, `disconnects` from each run's `result.json`.
+   `wire_amp`, `reverse_wire_amp`, `disconnects` from each run's `result.json`.
+   (Steps 1–2 are partially wired: `--stage screen` already runs the FEC×NAK×FREEZE
+   recipe matrix paired/alternating; the FEC-geometry sweep and the §4 deep
+   adverse axes are the remaining `--stage deep` work, T-A6.)
 4. **Apply the §2 rule** with the Holm-Bonferroni correction across cells.
 5. **Emit** a results JSON + update the evidence table; on a pass, the cloud
    capability descriptor and the CeraUI catalog gain the entry. On anything short
