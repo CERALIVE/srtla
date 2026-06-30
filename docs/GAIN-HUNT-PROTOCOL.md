@@ -102,21 +102,47 @@ cloud capability descriptor or the CeraUI catalog.
 
 ## 3. Candidate-Mixture Matrix
 
-FEC is always `arq:onreq`. Candidates vary the SRT packet-filter geometry only:
+Three binary axes define the screen matrix (2 × 2 × 2 = 8 tuples). The baseline
+tuple is one of the eight; the other 7 are candidates measured against it:
 
-| id | packetfilter spec (caller side) | arq |
-|----|--------------------------------|-----|
-| `m-even-8x8` | `fec,cols:8,rows:8,layout:even` | `onreq` |
-| `m-even-10x10` | `fec,cols:10,rows:10,layout:even` | `onreq` |
-| `m-stair-8x8` | `fec,cols:8,rows:8,layout:staircase` | `onreq` |
-| `m-stair-12x6` | `fec,cols:12,rows:6,layout:staircase` | `onreq` |
-| `m-cols-only` | `fec,cols:10,rows:1,layout:even` (column-only parity) | `onreq` |
-| (baseline) | *no packet filter — Classic L2 + latency, ARQ only* | n/a |
-| (banned control) | `fec,cols:8,rows:8,layout:even,arq:never` | `never` — asserted to NEVER promote |
+| Axis | Values | SRT option |
+|------|--------|-----------|
+| `REORDERFREEZE` | `{1, 0}` | `SRTO_REORDERFREEZE` (decay-freeze on/off) |
+| `NAKREPORT` | `{0, 1}` | `SRTO_NAKREPORT` (periodic NAK report off/on) |
+| `FEC` | `{off, on}` | caller `SRTO_PACKETFILTER` (see geometry below) |
+| `LOSSMAXTTL` | `40` (held constant) | `SRTO_LOSSMAXTTL` (BELABOX-parity reorder-tolerance cap) |
 
-The even vs staircase layout and the cols/rows ratio trade reconstruction latency
-against burst-loss coverage; column-only parity is the cheapest geometry and the
-natural "does any FEC pay off at all" probe.
+**Baseline B** = `REORDERFREEZE=1, NAKREPORT=0, FEC=off` (Classic L2 + latency, ARQ always on).
+
+The 7 candidates (all non-baseline tuples):
+
+| id | REORDERFREEZE | NAKREPORT | FEC | SRTO tuple |
+|----|--------------|-----------|-----|-----------|
+| `f1-n0-fec` | 1 | 0 | on | freeze=1, nak=0, packetfilter=fec |
+| `f1-n1-plain` | 1 | 1 | off | freeze=1, nak=1 |
+| `f1-n1-fec` | 1 | 1 | on | freeze=1, nak=1, packetfilter=fec |
+| `f0-n0-plain` | 0 | 0 | off | freeze=0, nak=0 |
+| `f0-n0-fec` | 0 | 0 | on | freeze=0, nak=0, packetfilter=fec |
+| `f0-n1-plain` | 0 | 1 | off | freeze=0, nak=1 |
+| `f0-n1-fec` | 0 | 1 | on | freeze=0, nak=1, packetfilter=fec |
+
+**FEC geometry constraint (pre-registered, Oracle O5):** FEC is always `arq:onreq`
+hybrid. The screen matrix fixes one geometry: `fec,cols:16,rows:1,layout:even,arq:onreq`
+(column-only parity, ~6% overhead). Column-only (`rows:1`) is the cheapest geometry and
+the natural "does any FEC pay off at all" probe. The `cols≥16` constraint is pre-registered
+to leave clear headroom under the `wire_amp ≤1.10×` budget: parity overhead is `1/cols`, so
+`cols:16` ⇒ ~6.25% (clear headroom), while `cols:10` sits exactly on the 10% cliff and
+`cols:8` ⇒ ~12.5% would **fail the budget by construction** (Oracle O5). Pure FEC
+(`arq:never`) is BANNED across the whole stack — it has no retransmit floor and regressed
+on every prior trial. The orchestrator REFUSES (exit 2) any tuple whose packetfilter
+contains `arq:never`.
+
+The executable geometry guard is
+[`../tests/compat/scenarios/gain-hunt-geometry-lint.sh`](../tests/compat/scenarios/gain-hunt-geometry-lint.sh):
+it parses every `fec,…,cols:<n>,…` spec in this doc and the orchestrator, computes the
+column-parity overhead (`1/cols`), and FAILS any geometry whose overhead exceeds the
+`wire_amp ≤1.10×` budget — so a regression to `cols:8` (~12.5%) or `cols:10` (exactly 10%)
+trips the lint, not a privileged campaign run.
 
 ---
 
@@ -133,15 +159,36 @@ byte-identical to its pre-axis behaviour (Rule E).
 | `RTT_SPREAD_MS` | `{0, 150, 400}` | Extra one-way delay added to the **slow** link only, widening cross-link skew past the built-in 50/150 ms band (slow delay = `150 + RTT_SPREAD_MS`) |
 
 A **cell** is one `(candidate, steady, burst, rtt)` point; the baseline is measured
-in the **same** cell with the same seed. The default candidate-cell count is
-`5 candidates × 4 × 2 × 3 = 120` candidate-cells, each paired with a baseline run.
-`reorder-stress.sh` already sweeps bitrate (`BITRATE_KBPS`) and receive latency
-(`RX_LATENCY_MS`); the gain hunt holds those at the production profile while
-sweeping the loss/RTT axes, then spot-checks the winners across bitrates.
+in the **same** cell with the same seed. The full-grid candidate-cell count is
+`7 candidates × 4 × 2 × 3 = 168` candidate-cells, each paired with a baseline run
+(the two-stage screen→deep sweep in §6 runs a far smaller reduced grid first, so the
+full grid is the upper bound, not the screen cost). `reorder-stress.sh` already sweeps
+bitrate (`BITRATE_KBPS`) and receive latency (`RX_LATENCY_MS`); the gain hunt holds
+those at the production profile while sweeping the loss/RTT axes, then spot-checks the
+winners across bitrates.
 
 Where the axes pay off (the search hypothesis): FEC redundancy should pay under
 high steady + bursty loss; a higher `lossmaxttl` should pay under extreme reorder;
 wide RTT spread stresses the bonded reassembly window.
+
+**Reverse-channel guardrail (NAK axis).** The `NAKREPORT` axis turns on periodic
+receiver→sender NAK reports, which cost reverse-channel bytes. That cost is bounded by
+the `reverse_wire_amp ≤1.10×` guardrail in §2: a NAK-on candidate cannot buy a forward
+gain by flooding the receiver→sender path. The instrument now meters `$PEERIF` egress
+**inside** the receiver netns (T-A4) — `setup_topology` installs a countable `prio` root
+qdisc on the veth peer (which defaults to `noqueue`, so the reverse egress had no Sent
+counter), and the scenario emits `reverse_wire_bytes` / `reverse_wire_amp`. So the
+periodic-NAK reverse cost is no longer invisible and cannot false-promote on forward
+`wire_amp` alone. **Empirical note (T-A4):** in this SRTLA topology the reverse channel
+is dominated by per-packet broadcast ACKs, so NAK-**off** (more imprecise retransmits)
+typically costs *more* reverse than NAK-**on** — the guardrail's value is visibility, not
+a fixed direction.
+
+**Geometry constraint (FEC axis).** The FEC axis fixes one pre-registered geometry
+(`fec,cols:16,rows:1,layout:even,arq:onreq`, ~6% column-only parity). The `cols≥16`
+floor keeps the forward FEC overhead clear of the `wire_amp ≤1.10×` budget by
+construction (§3, Oracle O5); the executable lint
+(`gain-hunt-geometry-lint.sh`) rejects any narrower geometry (e.g. `cols:8` ⇒ ~12.5%).
 
 ---
 
@@ -257,6 +304,30 @@ step below:
    yields `winner: none`.
 5. **Promote.** On a pass the cloud capability descriptor and the CeraUI catalog gain
    the entry; on anything short of a pass the mixture stays out of the UI.
+
+### NULL-verdict policy
+
+NULL is a **first-class, valid result** — the catalog shipping empty *forever* is an
+acceptable, evidence-backed outcome, not a failure of the campaign. The decision rule
+puts the burden of proof on the candidate, so "no recipe earns a button" is exactly
+what an honest gain hunt should report when no recipe actually pays off.
+
+NULL is recorded **only** when the **full deep set — sentinels included — shows no
+promotable candidate** under the §2 rule (Holm-Bonferroni across every deep cell). The
+two guards that make a NULL trustworthy rather than a measurement artifact:
+
+- **An empty screen-survivor set STILL deep-tests top-K + sentinels.** A NULL is never
+  recorded just because the screen rejected everything — the high-loss SENTINEL cells
+  (`STEADY_LOSS=7, BURST=20` per candidate) are deep-tested at full power regardless of
+  the screen outcome (the anti-false-NULL rescue, Oracle O4). Only if those too fail to
+  promote is the NULL honest.
+- **The stage's falsifiability control must have FAILED** (`PORT_MISMATCH` ⇒ zero bytes
+  ⇒ `pass:false`) before any arm ran. A control that *passes* ABORTS the stage (exit 2);
+  a verdict — NULL or promotion — from an instrument that cannot see a broken stream is
+  not trusted.
+
+A NULL verdict is written to `verdict.json` as `verdict: NULL` with the deep-set
+evidence retained, so the empty catalog is auditable against the cells that produced it.
 
 **Falsifiability:** each stage runs a `PORT_MISMATCH=1` control **before** the real
 arms; it must FAIL (wrong receiver port ⇒ zero bytes ⇒ `pass:false`). A control that
