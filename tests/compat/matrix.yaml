@@ -335,6 +335,26 @@ scenarios:
       table -> test-results/srt-receive-profiles/task-6-srt-receive-profiles.json.
       Unprivileged: netem.sh `require` exits 77 (SKIP).
 
+  - name: gain-hunt-matrix
+    script: tests/compat/scenarios/gain-hunt-matrix.sh
+    tier: informational
+    privileged: false
+    notes: >-
+      R&D ORCHESTRATOR STUB (non-blocking) for the FEC-mixture gain hunt: the
+      campaign that decides whether any FEC packet-filter mixture earns a place in
+      the operator-facing receiver-capability catalog (which ships EMPTY). The
+      script is a scaffold — it does NOT run the campaign. It fixes the
+      pre-registered "real gain + no regression" decision rule in code, enumerates
+      the candidate-mixture matrix (FEC ALWAYS arq:onreq hybrid; pure FEC arq:never
+      is BANNED, present only as a control row), and lists the adverse-config axes
+      it would drive scenarios/reorder-stress.sh across (STEADY_LOSS_PCT,
+      BURST_LOSS_PCT, RTT_SPREAD_MS). Modes: bare/`--dry-run`/`--help` exit 0;
+      `--claim-gain` is REFUSED (exit 3) — a gain cannot be claimed without measured
+      candidate-vs-baseline evidence, so the catalog cannot grow by running this
+      stub. Informational/NON-blocking: it never gates CI and is not executed by
+      run-matrix.sh --tier (which runs sender/receiver pairs, not scenarios). Full
+      protocol: docs/GAIN-HUNT-PROTOCOL.md. Run: tests/compat/scenarios/gain-hunt-matrix.sh --dry-run
+
 excluded:
   - name: moblink-rust
     repo: https://github.com/datagutt/moblink-rust

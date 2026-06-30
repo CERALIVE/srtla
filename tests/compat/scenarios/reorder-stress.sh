@@ -66,6 +66,20 @@
 #                         orchestrator prove the instrument can SEE a broken stream
 #                         (default unset = today's behaviour, byte-identical, Rule E).
 #
+# Adverse-config axes (gain-hunt harness; see docs/GAIN-HUNT-PROTOCOL.md). Empty
+# default = the netem disciplines below are byte-identical to the no-axis form, so
+# every existing run is unaffected (Rule E). They widen the impairment envelope a
+# FEC arq:onreq mixture candidate is stressed against:
+#   STEADY_LOSS_PCT       steady uniform packet-loss % applied to BOTH shaped links
+#                         (netem `loss <pct>%`). Empty = no loss.
+#   BURST_LOSS_PCT        bursty packet loss. With STEADY_LOSS_PCT it is the netem
+#                         loss CORRELATION % (`loss <steady>% <burst>%`); alone it
+#                         drives the Gilbert-Elliott model (`loss gemodel <pct>%`)
+#                         for clustered drops. Empty = no burst loss.
+#   RTT_SPREAD_MS         extra one-way delay added to the SLOW link only, widening
+#                         the cross-link skew past the built-in 50/150ms band
+#                         (slow delay = 150 + RTT_SPREAD_MS). Empty = 150ms.
+#
 # The recipe-shorthand maps to the 4 non-FEC receive profiles like so (see the
 # A/B driver scenarios/profile-validation-matrix.sh): freeze+NAK (Balanced /
 # Low-Latency / Resilient) = REORDERFREEZE=1 NAKREPORT=1; freeze+NAK-off
@@ -120,6 +134,9 @@ REORDERFREEZE="${REORDERFREEZE:-}"
 PROFILE_LABEL="${PROFILE_LABEL:-default}"
 NETEM_SEED="${NETEM_SEED:-}"
 PORT_MISMATCH="${PORT_MISMATCH:-}"
+STEADY_LOSS_PCT="${STEADY_LOSS_PCT:-}"
+BURST_LOSS_PCT="${BURST_LOSS_PCT:-}"
+RTT_SPREAD_MS="${RTT_SPREAD_MS:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -138,6 +155,9 @@ done
 [[ -z "$LOSSMAXTTL" || "$LOSSMAXTTL" =~ ^[0-9]+$ ]] || die "LOSSMAXTTL must be a non-negative integer"
 [[ -z "$NETEM_SEED" || "$NETEM_SEED" =~ ^[0-9]+$ ]] || die "NETEM_SEED must be a non-negative integer"
 [[ -z "$PORT_MISMATCH" || "$PORT_MISMATCH" =~ ^[01]$ ]] || die "PORT_MISMATCH must be 0 or 1"
+[[ -z "$STEADY_LOSS_PCT" || "$STEADY_LOSS_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "STEADY_LOSS_PCT must be a non-negative number"
+[[ -z "$BURST_LOSS_PCT" || "$BURST_LOSS_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "BURST_LOSS_PCT must be a non-negative number"
+[[ -z "$RTT_SPREAD_MS" || "$RTT_SPREAD_MS" =~ ^[0-9]+$ ]] || die "RTT_SPREAD_MS must be a non-negative integer"
 
 for tool in ffmpeg jq; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool '$tool' not found in PATH"
@@ -199,6 +219,21 @@ PFX=29
 DELAY_A_MS=50               # mechanism (i): asymmetric per-link delay
 DELAY_B_MS=150
 REORDER_DELAY_MS=20         # mechanism (ii): explicit reorder phase (fast link)
+
+# Each shaped link's netem args lead with `delay <ms>`; with no adverse axis set
+# the array is exactly `delay <ms>`, so the emitted tc command is unchanged.
+DELAY_B_EFFECTIVE="$DELAY_B_MS"
+[[ -n "$RTT_SPREAD_MS" ]] && DELAY_B_EFFECTIVE=$(( DELAY_B_MS + RTT_SPREAD_MS ))
+NETEM_LOSS_ARGS=()
+if [[ -n "$STEADY_LOSS_PCT" && -n "$BURST_LOSS_PCT" ]]; then
+  NETEM_LOSS_ARGS=(loss "${STEADY_LOSS_PCT}%" "${BURST_LOSS_PCT}%")
+elif [[ -n "$STEADY_LOSS_PCT" ]]; then
+  NETEM_LOSS_ARGS=(loss "${STEADY_LOSS_PCT}%")
+elif [[ -n "$BURST_LOSS_PCT" ]]; then
+  NETEM_LOSS_ARGS=(loss gemodel "${BURST_LOSS_PCT}%")
+fi
+NETEM_A=(delay "${DELAY_A_MS}ms" "${NETEM_LOSS_ARGS[@]}")
+NETEM_B=(delay "${DELAY_B_EFFECTIVE}ms" "${NETEM_LOSS_ARGS[@]}")
 
 SRTLA_PORT=5401
 SINK_PORT=4401
@@ -294,8 +329,8 @@ setup_topology() {
   # two bonded sources are delayed; ARP/control stays fast.
   tc qdisc add dev "$HOSTIF" root handle 1: prio bands 3 \
      priomap 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2                                   || die "prio qdisc failed"
-  tc qdisc add dev "$HOSTIF" parent 1:1 handle 10: netem delay "${DELAY_A_MS}ms" || die "netem A failed"
-  tc qdisc add dev "$HOSTIF" parent 1:2 handle 20: netem delay "${DELAY_B_MS}ms" || die "netem B failed"
+  tc qdisc add dev "$HOSTIF" parent 1:1 handle 10: netem "${NETEM_A[@]}" || die "netem A failed"
+  tc qdisc add dev "$HOSTIF" parent 1:2 handle 20: netem "${NETEM_B[@]}" || die "netem B failed"
   tc qdisc add dev "$HOSTIF" parent 1:3 handle 30: netem                        || die "netem default failed"
   tc filter add dev "$HOSTIF" parent 1: protocol ip prio 1 u32 \
      match ip src "${SRC_A}/32" flowid 1:1                                     || die "filter A failed"
@@ -374,7 +409,7 @@ fi
 # ----------------------------------------------------------------------------- #
 # Phase i — asymmetric link delays carry the stream (natural cross-link reorder).#
 # ----------------------------------------------------------------------------- #
-log "==> phase i: asymmetric delays ${DELAY_A_MS}ms / ${DELAY_B_MS}ms for ${PHASE_SEC}s"
+log "==> phase i: asymmetric delays ${DELAY_A_MS}ms / ${DELAY_B_EFFECTIVE}ms for ${PHASE_SEC}s${NETEM_LOSS_ARGS:+ (loss: ${NETEM_LOSS_ARGS[*]})}"
 sleep "$ESTABLISH_SEC"
 sleep "$PHASE_SEC"
 
@@ -386,13 +421,13 @@ log "==> phase ii: netem reorder 25% 50% delay ${REORDER_DELAY_MS}ms on link A f
 # runs; older iproute2 lacks the keyword, so fall back to the seedless form.
 if [[ -n "$NETEM_SEED" ]]; then
   tc qdisc change dev "$HOSTIF" parent 1:1 handle 10: \
-     netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% seed "$NETEM_SEED" 2>/dev/null \
+     netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% seed "$NETEM_SEED" "${NETEM_LOSS_ARGS[@]}" 2>/dev/null \
   || tc qdisc change dev "$HOSTIF" parent 1:1 handle 10: \
-       netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% \
+       netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% "${NETEM_LOSS_ARGS[@]}" \
   || die "could not apply reorder discipline"
 else
   tc qdisc change dev "$HOSTIF" parent 1:1 handle 10: \
-     netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% \
+     netem delay "${REORDER_DELAY_MS}ms" reorder 25% 50% "${NETEM_LOSS_ARGS[@]}" \
      || die "could not apply reorder discipline"
 fi
 
@@ -472,8 +507,9 @@ jq -n \
   --argjson pass "$pass" \
   --argjson handshake_ok "$handshake_ok" --argjson both_links_added "$both_links_added" \
   --argjson bytes_ok "$bytes_ok" --argjson disc_ok "$disc_ok" \
-  --argjson duration_ok "$duration_ok" --argjson reorder_active "$reorder_active" \
+  --argjson duration_ok "$duration_ok"   --argjson reorder_active "$reorder_active" \
   --argjson reorder_configured "$reorder_configured" \
+  --argjson delay_b_effective_ms "$DELAY_B_EFFECTIVE" \
   --argjson bytes "$bytes" --argjson disconnects "$disc" \
   --argjson duration_s "$duration_s" \
   --argjson reorder_pkts "$reorder_pkts" --argjson band_b_pkts "$band_b_pkts" \
@@ -485,6 +521,8 @@ jq -n \
   --argjson bitrate_kbps "$BITRATE_KBPS" --argjson rx_latency_ms "$RX_LATENCY_MS" \
   --arg nakreport "${NAKREPORT:-default}" --arg lossmaxttl "${LOSSMAXTTL:-default}" \
   --arg reorderfreeze "${REORDERFREEZE:-default}" --arg netem_seed "${NETEM_SEED:-none}" \
+  --arg steady_loss_pct "${STEADY_LOSS_PCT:-none}" --arg burst_loss_pct "${BURST_LOSS_PCT:-none}" \
+  --arg rtt_spread_ms "${RTT_SPREAD_MS:-none}" \
   --argjson ts_sync_errors "$ts_sync" --argjson ts_cc_errors "$ts_cc" \
   --argjson ts_packets "$ts_pkts" --argjson pkt_rcv_loss "$pkt_loss" \
   --argjson pkt_rcv_drop "$pkt_drop" --argjson pkt_retrans "$pkt_retr" \
@@ -499,7 +537,9 @@ jq -n \
     establish:{handshake:$handshake_ok, both_links_added:$both_links_added},
     config:{bitrate_kbps:$bitrate_kbps, rx_latency_ms:$rx_latency_ms,
             nakreport:$nakreport, lossmaxttl:$lossmaxttl,
-            reorderfreeze:$reorderfreeze, netem_seed:$netem_seed},
+            reorderfreeze:$reorderfreeze, netem_seed:$netem_seed,
+            steady_loss_pct:$steady_loss_pct, burst_loss_pct:$burst_loss_pct,
+            rtt_spread_ms:$rtt_spread_ms},
     sink:{bytes_received:$bytes, disconnects:$disconnects, duration_s:$duration_s,
           libsrt_version:$libsrt, libsrt_path:$sink_libsrt_path,
           extra_args:$sink_extra_args},
@@ -509,6 +549,7 @@ jq -n \
              pkt_rcv_drop:$pkt_rcv_drop, pkt_retrans:$pkt_retrans},
     reorder:{configured:$reorder_configured, phase_ii_pkts:$reorder_pkts,
              fast_delay_ms:$delay_a_ms, slow_delay_ms:$delay_b_ms,
+             slow_delay_effective_ms:$delay_b_effective_ms,
              slow_link_pkts:$band_b_pkts},
     timestamp:$ts
   }' > "$RESULT_JSON"
@@ -522,6 +563,7 @@ log ""
 log "================ reorder-stress summary ================"
 log "  profile=${PROFILE_LABEL} bitrate=${BITRATE_KBPS}k rx_latency=${RX_LATENCY_MS}ms"
 log "  recipe: nakreport=${NAKREPORT:-default} lossmaxttl=${LOSSMAXTTL:-default} reorderfreeze=${REORDERFREEZE:-default} seed=${NETEM_SEED:-none}"
+log "  adverse: steady_loss=${STEADY_LOSS_PCT:-none} burst_loss=${BURST_LOSS_PCT:-none} rtt_spread=${RTT_SPREAD_MS:-none}ms (slow_delay_effective=${DELAY_B_EFFECTIVE}ms)"
 log "  handshake_ok=${handshake_ok} (both_links_added=${both_links_added})"
 log "  bytes_ok=${bytes_ok} (bytes=${bytes} >= 5000) disc_ok=${disc_ok} (disc=${disc})"
 log "  duration_ok=${duration_ok} (duration=${duration_s}s >= 30)"
