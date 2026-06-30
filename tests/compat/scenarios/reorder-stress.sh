@@ -58,6 +58,13 @@
 #   PROFILE_LABEL         free-form tag echoed into result.json so an A/B driver can attribute the run.
 #   NETEM_SEED            fixed seed for the phase-ii reorder discipline (reproducible A/B runs;
 #                         silently ignored on iproute2 too old for `netem ... seed`).
+#   PORT_MISMATCH         0|1 -> falsifiability control. When 1, srtla_send targets the
+#                         WRONG receiver port (SRTLA_PORT+1) while srtla_rec listens on
+#                         SRTLA_PORT, so no bytes ever flow and the run MUST FAIL
+#                         (bytes_ok=false => pass=false). This mirrors run-matrix.sh's
+#                         `--scenario port-mismatch` negative control and lets an A/B
+#                         orchestrator prove the instrument can SEE a broken stream
+#                         (default unset = today's behaviour, byte-identical, Rule E).
 #
 # The recipe-shorthand maps to the 4 non-FEC receive profiles like so (see the
 # A/B driver scenarios/profile-validation-matrix.sh): freeze+NAK (Balanced /
@@ -112,6 +119,7 @@ LOSSMAXTTL="${LOSSMAXTTL:-}"
 REORDERFREEZE="${REORDERFREEZE:-}"
 PROFILE_LABEL="${PROFILE_LABEL:-default}"
 NETEM_SEED="${NETEM_SEED:-}"
+PORT_MISMATCH="${PORT_MISMATCH:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -129,6 +137,7 @@ done
 [[ -z "$REORDERFREEZE" || "$REORDERFREEZE" =~ ^[01]$ ]] || die "REORDERFREEZE must be 0 or 1"
 [[ -z "$LOSSMAXTTL" || "$LOSSMAXTTL" =~ ^[0-9]+$ ]] || die "LOSSMAXTTL must be a non-negative integer"
 [[ -z "$NETEM_SEED" || "$NETEM_SEED" =~ ^[0-9]+$ ]] || die "NETEM_SEED must be a non-negative integer"
+[[ -z "$PORT_MISMATCH" || "$PORT_MISMATCH" =~ ^[01]$ ]] || die "PORT_MISMATCH must be 0 or 1"
 
 for tool in ffmpeg jq; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool '$tool' not found in PATH"
@@ -333,7 +342,9 @@ wait_for_marker "$RX_LOG" "srtla_rec is now running" 5 || die "receiver never ca
 # RUST_LOG only affects the Rust fork sender (the C sender logs unconditionally);
 # without it the fork is silent and the both-links-added evidence grep sees nothing.
 printf '%s\n%s\n' "$SRC_A" "$SRC_B" > "$IPS_FILE"
-RUST_LOG="${RUST_LOG:-info}" "$SRTLA_SEND" "$LOCAL_SRT_PORT" "$RX_IP" "$SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
+TARGET_SRTLA_PORT="$SRTLA_PORT"
+[[ "$PORT_MISMATCH" == "1" ]] && TARGET_SRTLA_PORT=$(( SRTLA_PORT + 1 ))   # falsifiability control: wrong port => no bytes => MUST fail
+RUST_LOG="${RUST_LOG:-info}" "$SRTLA_SEND" "$LOCAL_SRT_PORT" "$RX_IP" "$TARGET_SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
 TX_PID=$!; track "$TX_PID"
 sleep 0.6
 
