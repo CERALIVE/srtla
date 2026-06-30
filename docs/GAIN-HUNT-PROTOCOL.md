@@ -20,10 +20,13 @@ tries to pass it.
 > here and in the orchestrator. The orchestrator now drives the instrument for a
 > `--smoke` cell and the `--stage screen` FEC×NAK×FREEZE recipe matrix (REORDERFREEZE
 > × NAKREPORT × FEC, baseline excluded → 7 candidates, `LOSSMAXTTL=40` held). The
-> deep adverse-axis + FEC-geometry sweep and the cross-cell Holm-Bonferroni stats
-> layer remain an explicit R&D track (`--stage deep`, T-A6). See "Running the Full
-> Campaign" for what completing it entails. The PRIMARY sender is `srtla-send-rs`;
-> a run with no fork resolvable SKIPs (exit 77).
+> **§2 statistics engine now exists** as `--analyze`: it takes already-measured paired
+> evidence and computes the verdict with an exact Mann-Whitney U (pure-stdlib — scipy
+> is absent on the box) and Holm-Bonferroni across every cell (see §5). What remains
+> for the R&D track (`--stage deep`, T-A6) is the deep adverse-axis + FEC-geometry
+> data **collection** that feeds `--analyze`. See "Running the Full Campaign" for what
+> completing it entails. The PRIMARY sender is `srtla-send-rs`; a run with no fork
+> resolvable SKIPs (exit 77).
 
 ---
 
@@ -160,8 +163,15 @@ SRTLA_SEND_RS_BIN=/path/to/srtla_send_rs \
 SRTLA_SEND_RS_BIN=/path/to/srtla_send_rs \
   tests/compat/scenarios/gain-hunt-matrix.sh --stage screen --reps 6
 
+# Apply the §2 decision-rule statistics to ALREADY-MEASURED paired evidence and emit a
+# verdict JSON (exact Mann-Whitney U + Holm-Bonferroni; pure stdlib, no scipy, no
+# privilege). <p> is a fixture JSON or a dir of <cell>/{candidate,baseline}/rep-*.json.
+# Exit 0 = promoted, 1 = not promoted, 2 = no usable evidence.
+tests/compat/scenarios/gain-hunt-matrix.sh --analyze tests/compat/fixtures/gain-hunt-golden/gain-fixture.json
+
 # Attempt to assert a gain — REFUSED (exit 3). A gain cannot be claimed by running
-# this script; only the cross-cell §2 stats (T-A6 deep stage) may.
+# this script; only the cross-cell §2 stats (which --analyze implements, fed the
+# T-A6 deep-stage evidence) may.
 tests/compat/scenarios/gain-hunt-matrix.sh --claim-gain \
     --candidate f1-n1-fec \
     --baseline tests/compat/results/.../result.json \
@@ -207,7 +217,17 @@ means wiring `gain-hunt-matrix.sh` to:
    (Steps 1–2 are partially wired: `--stage screen` already runs the FEC×NAK×FREEZE
    recipe matrix paired/alternating; the FEC-geometry sweep and the §4 deep
    adverse axes are the remaining `--stage deep` work, T-A6.)
-4. **Apply the §2 rule** with the Holm-Bonferroni correction across cells.
+4. **Apply the §2 rule** with the Holm-Bonferroni correction across cells. This step
+   is **already implemented** as `gain-hunt-matrix.sh --analyze <p>` (exact Mann-
+   Whitney U + Holm, pure stdlib — no scipy): point it at the collected per-cell
+   `result.json` tree (`<cell>/{candidate,baseline}/rep-*.json`) and it emits the
+   verdict JSON. The remaining T-A6 work is producing that evidence tree, not the
+   statistics. The engine is pinned by the golden fixtures in
+   `tests/compat/fixtures/gain-hunt-golden/` (validated by
+   `tests/compat/scenarios/gain-hunt-analyze-test.sh`): a clean-separation gain (exact
+   `U=100`, `p=2/C(20,10)≈1.0825×10⁻⁵`) promotes; a goodput win bought by a disconnect
+   or by `reverse_wire_amp > 1.10×` is rejected naming the tripped guardrail; a tie
+   yields `winner: none`.
 5. **Emit** a results JSON + update the evidence table; on a pass, the cloud
    capability descriptor and the CeraUI catalog gain the entry. On anything short
    of a pass, the mixture stays out of the UI.

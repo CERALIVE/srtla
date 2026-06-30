@@ -1,0 +1,193 @@
+{
+  "fixture": "regression",
+  "description": "Candidate wins goodput (clean separation) but ONE candidate rep disconnects (disc=1) -> disconnects_zero hard gate fails. The gain is real but bought by a stream break. Verdict: not_promoted (tripped: disconnects_zero).",
+  "candidate_id": "f0-n1-fec",
+  "cells": {
+    "steady3-burst20": {
+      "baseline": [
+        {
+          "goodput_bps": 7000000,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7000100,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7000200,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7000300,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7000400,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7000500,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7000600,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7000700,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7000800,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7000900,
+          "pkt_rcv_drop": 12,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.05,
+          "reverse_wire_amp": 0.02,
+          "disconnects": 0
+        }
+      ],
+      "candidate": [
+        {
+          "goodput_bps": 7300000,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7300100,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7300200,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7300300,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7300400,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7300500,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 1
+        },
+        {
+          "goodput_bps": 7300600,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7300700,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7300800,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 0
+        },
+        {
+          "goodput_bps": 7300900,
+          "pkt_rcv_drop": 0,
+          "ts_sync_errors": 0,
+          "ts_cc_errors": 0,
+          "wire_amp": 1.08,
+          "reverse_wire_amp": 0.018,
+          "disconnects": 0
+        }
+      ]
+    }
+  }
+}

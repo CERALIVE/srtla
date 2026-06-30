@@ -81,6 +81,15 @@
 #   gain-hunt-matrix.sh --stage screen  run the full screen matrix (T-A6 seam; minimal)
 #   gain-hunt-matrix.sh --stage deep    run the deep adverse sweep   (T-A6 seam; minimal)
 #   gain-hunt-matrix.sh --help          this header (exit 0)
+#   gain-hunt-matrix.sh --analyze <p>   apply the pre-registered §2 decision-rule
+#                                       statistics to ALREADY-MEASURED paired evidence
+#                                       <p> (a self-contained fixture JSON, or a dir of
+#                                       <cell>/{candidate,baseline}/rep-*.json). Exact
+#                                       Mann-Whitney U (stdlib-only, no scipy) + Holm-
+#                                       Bonferroni across every cell; emits a verdict
+#                                       JSON to stdout. This is the §2 stats layer the
+#                                       deep stage calls — it COMPUTES a verdict over
+#                                       supplied evidence, it does not RUN the campaign.
 #   gain-hunt-matrix.sh --claim-gain …  attempt to assert a gain. REFUSED (exit 3) —
 #                                       a gain cannot be claimed by running this
 #                                       script; only the measured campaign + the §2
@@ -175,6 +184,7 @@ print_matrix() {
 # --------------------------------------------------------------------------- #
 MODE="notice"
 STAGE=""
+ANALYZE_PATH=""
 CANDIDATE=""
 BASELINE=""
 DECISION_RULE=""
@@ -187,6 +197,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run)       MODE="dry-run"; shift ;;
     --smoke)         MODE="smoke"; shift ;;
     --stage)         MODE="stage"; STAGE="${2:?--stage needs screen|deep}"; shift 2 ;;
+    --analyze)       MODE="analyze"; ANALYZE_PATH="${2:?--analyze needs a path}"; shift 2 ;;
     --claim-gain)    MODE="claim-gain"; shift ;;
     --candidate)     CANDIDATE="${2:?--candidate needs a value}"; shift 2 ;;
     --baseline)      BASELINE="${2:?--baseline needs a value}"; shift 2 ;;
@@ -326,6 +337,8 @@ case "$MODE" in
     log "    --dry-run     print the full 3-axis matrix + each cell's SRTO tuple"
     log "    --smoke       run ONE paired cell (needs CAP_NET_ADMIN + srtla-send-rs)"
     log "    --stage screen|deep   the full matrix / deep sweep (T-A6 seam)"
+    log "    --analyze <p> apply the §2 decision-rule stats (exact Mann-Whitney U,"
+    log "                  Holm-Bonferroni) to measured paired evidence -> verdict JSON"
     log "    --help        the decision rule + candidate matrix in full"
     log "    --claim-gain  REFUSED until the campaign is run (falsifiable)"
     exit 0
@@ -407,6 +420,282 @@ case "$MODE" in
     log "  ${local_t} candidate cells run. Per-rep JSON under ${RESULTS_DIR}/${STAGE}/."
     log "  Cross-cell verdict (§2 rule + Holm-Bonferroni) is the T-A6 deep-stats seam."
     exit 0
+    ;;
+
+  analyze)
+    # §2 decision-rule statistics over ALREADY-MEASURED paired evidence. This COMPUTES
+    # a verdict from supplied per-rep results — it does not run the campaign, needs no
+    # CAP_NET_ADMIN and no sender, and is stdlib-only (scipy is absent on this box).
+    [[ -e "$ANALYZE_PATH" ]] || die "--analyze: path not found: ${ANALYZE_PATH}"
+    python3 - "$ANALYZE_PATH" <<'PY'
+import json, math, os, sys, glob
+from collections import Counter
+
+ALPHA = 0.05
+GAIN_GOODPUT_RATIO = 1.03   # real gain: median goodput(C) >= 1.03x median goodput(B)
+GAIN_LATEDROP_RATIO = 0.80  # real gain: median pkt_rcv_drop(C) <= 0.80x median(B)
+GOODPUT_FLOOR = 0.99        # no-regression + late-drop-win non-inferiority floor
+WIRE_AMP_CEIL = 1.10
+REVERSE_AMP_CEIL = 1.10
+
+def median(xs):
+    xs = sorted(xs); n = len(xs)
+    if n == 0:
+        return 0.0
+    mid = n // 2
+    return float(xs[mid]) if n % 2 else (xs[mid - 1] + xs[mid]) / 2.0
+
+def p95(xs):
+    xs = sorted(xs); n = len(xs)
+    if n == 0:
+        return 0.0
+    idx = min(n - 1, max(0, math.ceil(0.95 * n) - 1))
+    return float(xs[idx])
+
+def midranks(values):
+    # 1-based ranks with ties resolved to the average rank (midrank) of the tie group.
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    n = len(values); i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        avg = (i + j + 2) / 2.0
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg
+        i = j + 1
+    return ranks
+
+def _comb(a, b):
+    return math.comb(a, b)
+
+def mann_whitney_u_exact(x, y):
+    """Exact Mann-Whitney U statistic and two-sided p-value for small n.
+
+    Uses the exact permutation rank-sum distribution for m,n <= 20: a subset-sum
+    DP over the (doubled, tie-aware) ranks counts, for every way to assign m of the
+    m+n ranks to x, the resulting rank sum, giving the exact null distribution of U.
+    Two-sided p = P(U <= min(U, m*n - U)) * 2 (clamped to 1). For m or n > 20 it
+    falls back to the normal approximation with tie correction (reserved for future
+    deeper sweeps; the campaign's n=10 always takes the exact path). Returns (U, p)
+    with U the candidate-arm statistic.
+    """
+    m = len(x); n = len(y)
+    if m == 0 or n == 0:
+        return 0.0, 1.0
+    combined = list(x) + list(y)
+    ranks = midranks(combined)
+    if m > 20 or n > 20:
+        return _mann_whitney_u_normal(m, n, ranks, combined)
+    # Double the midranks so every value is an integer (midranks are k/2 multiples).
+    dr = [int(round(2 * r)) for r in ranks]
+    Rx2 = sum(dr[:m])
+    Ux2 = Rx2 - m * (m + 1)            # doubled U for the candidate arm
+    Uy2 = 2 * m * n - Ux2
+    Umin2 = min(Ux2, Uy2)
+    Ux = Ux2 / 2.0
+    total_sum = sum(dr)
+    # dp[k][s] = number of size-k rank subsets summing to s (doubled units).
+    dp = [[0] * (total_sum + 1) for _ in range(m + 1)]
+    dp[0][0] = 1
+    for r in dr:
+        for k in range(m, 0, -1):
+            row_k = dp[k]; row_k1 = dp[k - 1]
+            for s in range(total_sum, r - 1, -1):
+                c = row_k1[s - r]
+                if c:
+                    row_k[s] += c
+    total = _comb(m + n, m)
+    # U <= Umin  <=>  R2 <= Umin2 + m(m+1)
+    thr = Umin2 + m * (m + 1)
+    count = sum(dp[m][s] for s in range(0, min(thr, total_sum) + 1))
+    p = min(1.0, 2.0 * count / total)
+    return Ux, p
+
+def _mann_whitney_u_normal(m, n, ranks, combined):
+    N = m + n
+    Rx = sum(ranks[:m])
+    Ux = Rx - m * (m + 1) / 2.0
+    mu = m * n / 2.0
+    tie = sum(t ** 3 - t for t in Counter(combined).values())
+    var = (m * n / 12.0) * ((N + 1) - tie / (N * (N - 1.0)))
+    if var <= 0:
+        return Ux, 1.0
+    z = (abs(Ux - mu) - 0.5) / math.sqrt(var)
+    if z < 0:
+        z = 0.0
+    p = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0))))
+    return Ux, min(1.0, p)
+
+def rep_field(d, key, default):
+    if key in d:
+        return d[key]
+    m = d.get("metrics") or {}
+    if key in m:
+        return m[key]
+    s = d.get("sink") or {}
+    if key in s:
+        return s[key]
+    return default
+
+def norm_rep(d):
+    return {
+        "goodput_bps": float(rep_field(d, "goodput_bps", 0) or 0),
+        "pkt_rcv_drop": float(rep_field(d, "pkt_rcv_drop", 0) or 0),
+        "ts_sync_errors": int(rep_field(d, "ts_sync_errors", 0) or 0),
+        "ts_cc_errors": int(rep_field(d, "ts_cc_errors", 0) or 0),
+        "wire_amp": float(rep_field(d, "wire_amp", 0) or 0),
+        "reverse_wire_amp": float(rep_field(d, "reverse_wire_amp", 0) or 0),
+        "disconnects": int(rep_field(d, "disconnects", 0) or 0),
+    }
+
+def load_reps_dir(d):
+    out = []
+    for f in sorted(glob.glob(os.path.join(d, "rep-*.json"))):
+        try:
+            with open(f) as fh:
+                out.append(norm_rep(json.load(fh)))
+        except (OSError, ValueError):
+            out.append(norm_rep({}))
+    return out
+
+def load_cells(path):
+    if os.path.isfile(path):
+        with open(path) as fh:
+            doc = json.load(fh)
+        cid = doc.get("candidate_id", "candidate")
+        if "cells" in doc:
+            cells = {name: {"candidate": [norm_rep(r) for r in c.get("candidate", [])],
+                            "baseline":  [norm_rep(r) for r in c.get("baseline", [])]}
+                     for name, c in doc["cells"].items()}
+        else:
+            cells = {"cell": {"candidate": [norm_rep(r) for r in doc.get("candidate", [])],
+                              "baseline":  [norm_rep(r) for r in doc.get("baseline", [])]}}
+        return cid, cells
+    cand = os.path.join(path, "candidate"); base = os.path.join(path, "baseline")
+    if os.path.isdir(cand) and os.path.isdir(base):
+        return os.path.basename(os.path.normpath(path)) or "candidate", \
+            {"cell": {"candidate": load_reps_dir(cand), "baseline": load_reps_dir(base)}}
+    cells = {}
+    for name in sorted(os.listdir(path)):
+        sub = os.path.join(path, name)
+        if os.path.isdir(os.path.join(sub, "candidate")) and os.path.isdir(os.path.join(sub, "baseline")):
+            cells[name] = {"candidate": load_reps_dir(os.path.join(sub, "candidate")),
+                           "baseline":  load_reps_dir(os.path.join(sub, "baseline"))}
+    return "candidate", cells
+
+def analyze_cell(arms):
+    C = arms["candidate"]; B = arms["baseline"]
+    cg = [r["goodput_bps"] for r in C]; bg = [r["goodput_bps"] for r in B]
+    cd = [r["pkt_rcv_drop"] for r in C]; bd = [r["pkt_rcv_drop"] for r in B]
+    mcg = median(cg); mbg = median(bg)
+    mcd = median(cd); mbd = median(bd)
+    goodput_win = mbg > 0 and mcg >= GAIN_GOODPUT_RATIO * mbg
+    latedrop_win = (mbd > 0 and mcd <= GAIN_LATEDROP_RATIO * mbd
+                    and (mbg <= 0 or mcg >= GOODPUT_FLOOR * mbg))
+    if goodput_win:
+        win_metric = "goodput_bps"; U, p = mann_whitney_u_exact(cg, bg)
+    elif latedrop_win:
+        win_metric = "pkt_rcv_drop"; U, p = mann_whitney_u_exact(cd, bd)
+    else:
+        win_metric = "goodput_bps"; U, p = mann_whitney_u_exact(cg, bg)
+    win = goodput_win or latedrop_win
+
+    mc_wire = median([r["wire_amp"] for r in C]); mb_wire = median([r["wire_amp"] for r in B])
+    mc_rev = median([r["reverse_wire_amp"] for r in C]); mb_rev = median([r["reverse_wire_amp"] for r in B])
+    g = {
+        "disconnects_zero": all(r["disconnects"] == 0 for r in C),
+        "ts_sync_zero": all(r["ts_sync_errors"] == 0 for r in C),
+        "ts_cc_le_baseline": median([r["ts_cc_errors"] for r in C]) <= median([r["ts_cc_errors"] for r in B]),
+        "goodput_ge_99pct": mcg >= GOODPUT_FLOOR * mbg if mbg > 0 else True,
+        "wire_amp_le_110pct": (mc_wire <= WIRE_AMP_CEIL * mb_wire) if mb_wire > 0 else (mc_wire == 0),
+        "reverse_wire_amp_le_110pct": (mc_rev <= REVERSE_AMP_CEIL * mb_rev) if mb_rev > 0 else (mc_rev == 0),
+        "p95_late_drop_le_baseline": p95(cd) <= p95(bd),
+    }
+    tripped = [k for k, ok in g.items() if not ok]
+    return {
+        "n_candidate": len(C), "n_baseline": len(B),
+        "gain": {"goodput": goodput_win, "late_drop": latedrop_win, "win": win,
+                 "win_metric": win_metric},
+        "mwu": {"metric": win_metric, "U": U, "p": p},
+        "guardrails": g, "tripped_guardrails": tripped,
+        "no_regression": not tripped,
+        "medians": {"goodput_c": mcg, "goodput_b": mbg, "pkt_rcv_drop_c": mcd,
+                    "pkt_rcv_drop_b": mbd, "wire_amp_c": mc_wire, "wire_amp_b": mb_wire,
+                    "reverse_wire_amp_c": mc_rev, "reverse_wire_amp_b": mb_rev},
+    }
+
+def holm(pmap):
+    # Holm-Bonferroni step-down over the WHOLE family (every cell in the set).
+    order = sorted(pmap.items(), key=lambda kv: kv[1])
+    k = len(order); adj = {}; running = 0.0
+    for i, (name, p) in enumerate(order):
+        running = max(running, (k - i) * p)
+        adj[name] = min(1.0, running)
+    return adj
+
+path = sys.argv[1]
+candidate_id, cells = load_cells(path)
+if not cells or all((not c["candidate"] or not c["baseline"]) for c in cells.values()):
+    sys.stderr.write("gain-hunt-matrix --analyze: no paired evidence found at %s\n" % path)
+    print(json.dumps({"verdict": "error", "promoted": False, "winner": "none",
+                      "reason": "no_paired_evidence", "path": path}))
+    sys.exit(2)
+
+cell_results = {name: analyze_cell(arms) for name, arms in cells.items()}
+pmap = {name: r["mwu"]["p"] for name, r in cell_results.items()}
+adj = holm(pmap)
+for name, r in cell_results.items():
+    r["holm_adjusted_p"] = adj[name]
+    r["holm_significant"] = adj[name] < ALPHA
+
+real_gain_cells = [name for name, r in cell_results.items()
+                   if r["gain"]["win"] and r["holm_significant"] and r["no_regression"]]
+all_no_regression = all(r["no_regression"] for r in cell_results.values())
+promoted = bool(real_gain_cells) and all_no_regression
+
+if promoted:
+    reason = "real_gain_in_%d_cell(s)_no_regression" % len(real_gain_cells)
+elif not all_no_regression:
+    reason = "regression_in_>=1_cell"
+elif not any(r["gain"]["win"] for r in cell_results.values()):
+    reason = "no_real_gain"
+else:
+    reason = "gain_not_significant_after_holm"
+
+regression_cells = {name: r["tripped_guardrails"]
+                    for name, r in cell_results.items() if r["tripped_guardrails"]}
+
+verdict = {
+    "candidate_id": candidate_id,
+    "verdict": "promoted" if promoted else "not_promoted",
+    "promoted": promoted,
+    "winner": candidate_id if promoted else "none",
+    "reason": reason,
+    "alpha": ALPHA,
+    "n_cells": len(cell_results),
+    "real_gain_cells": real_gain_cells,
+    "regression_cells": regression_cells,
+    "holm_adjusted_p": adj,
+    "cells": cell_results,
+}
+print(json.dumps(verdict, indent=2, sort_keys=True))
+
+sys.stderr.write("\n========== gain-hunt --analyze (%s) ==========\n" % candidate_id)
+for name in sorted(cell_results):
+    r = cell_results[name]
+    sys.stderr.write(
+        "  %-18s win=%-5s U=%.1f p=%.3e holm=%.3e no_regr=%-5s tripped=%s\n" % (
+            name, str(r["gain"]["win"]), r["mwu"]["U"], r["mwu"]["p"],
+            r["holm_adjusted_p"], str(r["no_regression"]),
+            ",".join(r["tripped_guardrails"]) or "-"))
+sys.stderr.write("VERDICT: %s (winner=%s; %s)\n" % (
+    verdict["verdict"], verdict["winner"], reason))
+sys.stderr.write("================================================\n")
+sys.exit(0 if promoted else 1)
+PY
+    exit $?
     ;;
 
   claim-gain)
