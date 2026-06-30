@@ -16,17 +16,23 @@ tries to pass it.
 - **Harness scaffold:** [`../tests/compat/scenarios/gain-hunt-matrix.sh`](../tests/compat/scenarios/gain-hunt-matrix.sh) — orchestrator **stub** (this effort). It documents the rule and the matrix and **does not run the campaign** (R&D track).
 - **Measurement instrument:** [`../tests/compat/scenarios/reorder-stress.sh`](../tests/compat/scenarios/reorder-stress.sh) — the same A/B instrument the profile-validation matrix uses, now extended with the adverse-config axes below.
 
-> **Status:** PARTIALLY WIRED. The decision rule and candidate matrix are fixed
-> here and in the orchestrator. The orchestrator now drives the instrument for a
-> `--smoke` cell and the `--stage screen` FEC×NAK×FREEZE recipe matrix (REORDERFREEZE
-> × NAKREPORT × FEC, baseline excluded → 7 candidates, `LOSSMAXTTL=40` held). The
-> **§2 statistics engine now exists** as `--analyze`: it takes already-measured paired
-> evidence and computes the verdict with an exact Mann-Whitney U (pure-stdlib — scipy
-> is absent on the box) and Holm-Bonferroni across every cell (see §5). What remains
-> for the R&D track (`--stage deep`, T-A6) is the deep adverse-axis + FEC-geometry
-> data **collection** that feeds `--analyze`. See "Running the Full Campaign" for what
-> completing it entails. The PRIMARY sender is `srtla-send-rs`; a run with no fork
-> resolvable SKIPs (exit 77).
+> **Status:** WIRED (two-stage). The decision rule and candidate matrix are fixed
+> here and in the orchestrator. The orchestrator now runs the campaign as a
+> **two-stage screen→deep** sweep (T-A6): `--stage screen` sweeps all 7 candidates
+> (REORDERFREEZE × NAKREPORT × FEC, baseline excluded, `LOSSMAXTTL=40` held) across a
+> reduced adverse grid at low reps (=4) and emits the **survivors** set; `--stage
+> deep` runs the **deep set = screen-survivors ∪ top-K(2)/family ∪ the high-loss
+> SENTINEL cells (`STEADY_LOSS=7,BURST=20` per candidate, ALWAYS)** at reps=10, then
+> applies `--analyze` across **every** deep cell and writes `verdict.json`. The
+> sentinels are deep-tested even when the screen rejected them — the **anti-false-NULL
+> rescue** (Oracle O4: a low-rep screen can miss a real effect at the directional
+> survivor threshold; testing only survivors would then bury it as a FALSE NULL).
+> Each stage runs a `PORT_MISMATCH=1` falsifiability control FIRST and ABORTS (exit 2)
+> if it passes. The **§2 statistics engine** is `--analyze`: exact Mann-Whitney U
+> (pure-stdlib — scipy is absent on the box) + Holm-Bonferroni across every cell (§5).
+> What remains for the R&D track (Wave B) is **running** the campaign under
+> `CAP_NET_ADMIN` to collect the evidence; T-A6 wired the structure, not the data. The
+> PRIMARY sender is `srtla-send-rs`; a run with no fork resolvable SKIPs (exit 77).
 
 ---
 
@@ -154,14 +160,27 @@ tests/compat/scenarios/gain-hunt-matrix.sh --dry-run
 # The decision rule + candidate matrix in full (exit 0):
 tests/compat/scenarios/gain-hunt-matrix.sh --help
 
-# Run ONE paired cell (NAK-on candidate vs Classic baseline). Needs CAP_NET_ADMIN
-# and a resolvable srtla-send-rs; SKIPs (exit 77) otherwise.
+# Run ONE paired cell (NAK-on candidate vs Classic baseline). The PORT_MISMATCH
+# falsifiability control runs FIRST (must fail); a control that passes SKIPs (exit 77).
+# Needs CAP_NET_ADMIN and a resolvable srtla-send-rs; SKIPs (exit 77) otherwise.
 SRTLA_SEND_RS_BIN=/path/to/srtla_send_rs \
   tests/compat/scenarios/gain-hunt-matrix.sh --smoke --duration 8
 
-# Run the full screen recipe matrix (7 candidate cells vs baseline):
+# Print the planned cell set with NO privilege (nothing executed). The deep plan
+# lists the SENTINEL cells for EVERY family — including screen-rejected ones — so you
+# can see the anti-false-NULL rescue before committing a privileged run:
+tests/compat/scenarios/gain-hunt-matrix.sh --stage screen --plan
+tests/compat/scenarios/gain-hunt-matrix.sh --stage deep --plan
+
+# STAGE 1 — screen: 7 candidates × a reduced adverse grid at low reps (=4); emits
+# survivors.json (possibly empty). Falsifiability control first; ABORTS (exit 2) if it passes.
 SRTLA_SEND_RS_BIN=/path/to/srtla_send_rs \
-  tests/compat/scenarios/gain-hunt-matrix.sh --stage screen --reps 6
+  tests/compat/scenarios/gain-hunt-matrix.sh --stage screen
+
+# STAGE 2 — deep: deep set = survivors ∪ top-K(2)/family ∪ sentinels (ALWAYS) at
+# reps=10, then --analyze across every deep cell -> verdict.json (promoted[...] or NULL).
+SRTLA_SEND_RS_BIN=/path/to/srtla_send_rs \
+  tests/compat/scenarios/gain-hunt-matrix.sh --stage deep
 
 # Apply the §2 decision-rule statistics to ALREADY-MEASURED paired evidence and emit a
 # verdict JSON (exact Mann-Whitney U + Holm-Bonferroni; pure stdlib, no scipy, no
@@ -198,45 +217,57 @@ STEADY_LOSS_PCT=3 BURST_LOSS_PCT=20 RTT_SPREAD_MS=150 \
 
 ---
 
-## 6. Running the Full Campaign (Future R&D Track)
+## 6. Running the Full Campaign (Wave B R&D Track)
 
-Implementing the campaign — explicitly **out of scope** for the scaffold effort —
-means wiring `gain-hunt-matrix.sh` to:
+The two-stage **structure** is wired (T-A6). What remains for Wave B is **running**
+it under `CAP_NET_ADMIN` to collect evidence — the orchestrator already drives every
+step below:
 
-1. **Build and pin each candidate's FEC libsrt geometry.** The device-side FEC
-   packet-filter is only compiled when a FEC mixture is actively being earned
-   (deferred per `RECEIVER-RECONCILIATION.md` "Out of Scope"). The receiver-side
-   libsrt is swapped under `srt-sink` via `SINK_LD_LIBRARY_PATH`, exactly as
-   `profile-validation-matrix.sh` swaps its baseline/freeze artifacts.
-2. **Run `reorder-stress.sh` paired/alternating** (candidate vs baseline) per cell,
-   with a shared per-rep `NETEM_SEED`, `N` reps each (start at `N=10`, matching the
-   profile matrix), passing the FEC packetfilter to `srt-sink` via `SINK_EXTRA_ARGS`
-   `--packetfilter`.
-3. **Collect** `goodput_bps`, `pkt_rcv_drop`, `ts_sync_errors`, `ts_cc_errors`,
-   `wire_amp`, `reverse_wire_amp`, `disconnects` from each run's `result.json`.
-   (Steps 1–2 are partially wired: `--stage screen` already runs the FEC×NAK×FREEZE
-   recipe matrix paired/alternating; the FEC-geometry sweep and the §4 deep
-   adverse axes are the remaining `--stage deep` work, T-A6.)
-4. **Apply the §2 rule** with the Holm-Bonferroni correction across cells. This step
-   is **already implemented** as `gain-hunt-matrix.sh --analyze <p>` (exact Mann-
-   Whitney U + Holm, pure stdlib — no scipy): point it at the collected per-cell
-   `result.json` tree (`<cell>/{candidate,baseline}/rep-*.json`) and it emits the
-   verdict JSON. The remaining T-A6 work is producing that evidence tree, not the
-   statistics. The engine is pinned by the golden fixtures in
+1. **Stage 1 — screen (`--stage screen`).** Runs all 7 candidates × a reduced adverse
+   grid (`STEADY_LOSS_PCT ∈ {3,7}`, `BURST_LOSS_PCT ∈ {0,20}`) paired/alternating vs
+   the Classic baseline at `SCREEN_REPS=4`, shared per-rep `NETEM_SEED`. A combo
+   **survives** if it shows a directional gain (`goodput ≥ 1.03×` OR `late-drop ≤
+   0.80×`) in ≥1 cell with **no hard-gate failure** (`disconnects==0`, `ts_sync==0`).
+   Writes `screen-results.json` + `survivors.json` (survivors may be empty).
+2. **Stage 2 — deep (`--stage deep`) with the anti-false-NULL rescue.** The deep set =
+   **screen-survivors ∪ top-K(2)/family by directional effect size ∪ the high-loss
+   SENTINEL cells (`STEADY_LOSS=7,BURST=20` per candidate, ALWAYS)**. An empty survivor
+   set STILL deep-tests top-K + sentinels — a NULL verdict is recorded **only** when
+   the full deep set, sentinels included, shows no promotable candidate. Runs at
+   `DEEP_REPS=10`. This is Oracle O4's guard: a low-rep screen can miss a real effect
+   at the directional survivor threshold, so testing only survivors would bury it as a
+   FALSE NULL; the sentinels (where FEC should pay off) are re-tested at full power
+   regardless of the screen outcome. `--stage deep --plan` prints the set without
+   privilege — the sentinels appear for every family, including screen-rejected ones.
+3. **FEC geometry / libsrt swap.** The device-side FEC packet-filter is only compiled
+   when a mixture is actively being earned (deferred per `RECEIVER-RECONCILIATION.md`
+   "Out of Scope"); the receiver-side libsrt is swapped under `srt-sink` via
+   `SINK_LD_LIBRARY_PATH`. The screen/deep cells already pass the FEC packetfilter to
+   `srt-sink` (via `SINK_EXTRA_ARGS --packetfilter`) on every FEC arm.
+4. **Verdict — §2 rule, Holm-Bonferroni across the FULL deep set.** `--stage deep`
+   runs `--analyze` over the whole deep tree (`<cell>/{candidate,baseline}/rep-*.json`)
+   — exact Mann-Whitney U + Holm across **every** deep cell, not just survivors — and
+   writes `verdict.json` (`promoted: [...]` or `verdict: NULL`). Each promoted combo
+   carries `{combo, srt_flags, caller_packetfilter, nak, freeze, evidence_cells}`. The
+   `--analyze` engine is pinned by the golden fixtures in
    `tests/compat/fixtures/gain-hunt-golden/` (validated by
    `tests/compat/scenarios/gain-hunt-analyze-test.sh`): a clean-separation gain (exact
    `U=100`, `p=2/C(20,10)≈1.0825×10⁻⁵`) promotes; a goodput win bought by a disconnect
    or by `reverse_wire_amp > 1.10×` is rejected naming the tripped guardrail; a tie
    yields `winner: none`.
-5. **Emit** a results JSON + update the evidence table; on a pass, the cloud
-   capability descriptor and the CeraUI catalog gain the entry. On anything short
-   of a pass, the mixture stays out of the UI.
+5. **Promote.** On a pass the cloud capability descriptor and the CeraUI catalog gain
+   the entry; on anything short of a pass the mixture stays out of the UI.
+
+**Falsifiability:** each stage runs a `PORT_MISMATCH=1` control **before** the real
+arms; it must FAIL (wrong receiver port ⇒ zero bytes ⇒ `pass:false`). A control that
+PASSES proves the instrument cannot see a broken stream — the stage ABORTS (exit 2,
+"instrument not falsifiable") and no verdict is trusted.
 
 **Privilege:** the campaign needs `CAP_NET_ADMIN` (real root, passwordless sudo, or
 mapped-root in a user+net namespace), gated via `tests/compat/lib/netem.sh`
 `require`; without it the harness must SKIP (exit 77), never fabricate a
-measurement. A `PORT_MISMATCH=1` falsifiability control run must precede the real
-arms and must FAIL, proving the instrument can see a broken stream.
+measurement. Evidence lands under `test-results/gain-hunt/` (screen/deep rep trees +
+`screen-results.json`, `survivors.json`, `deep-results.json`, `verdict.json`).
 
 **Rule D:** all artifacts stay within the `srtla` repo
 (`tests/compat/results/`, `test-results/`); nothing is written above the repo root.

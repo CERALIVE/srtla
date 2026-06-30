@@ -339,21 +339,28 @@ scenarios:
     script: tests/compat/scenarios/gain-hunt-matrix.sh
     tier: informational
     privileged: false
+    smoke: tests/compat/scenarios/gain-hunt-matrix.sh --smoke
     notes: >-
-      R&D ORCHESTRATOR STUB (non-blocking) for the FEC-mixture gain hunt: the
-      campaign that decides whether any FEC packet-filter mixture earns a place in
-      the operator-facing receiver-capability catalog (which ships EMPTY). The
-      script is a scaffold — it does NOT run the campaign. It fixes the
+      R&D ORCHESTRATOR (non-blocking) for the FEC×NAK×FREEZE gain hunt: the
+      campaign that decides whether any receiver recipe earns a place in the
+      operator-facing receiver-capability catalog (which ships EMPTY). It fixes the
       pre-registered "real gain + no regression" decision rule in code, enumerates
-      the candidate-mixture matrix (FEC ALWAYS arq:onreq hybrid; pure FEC arq:never
-      is BANNED, present only as a control row), and lists the adverse-config axes
-      it would drive scenarios/reorder-stress.sh across (STEADY_LOSS_PCT,
-      BURST_LOSS_PCT, RTT_SPREAD_MS). Modes: bare/`--dry-run`/`--help` exit 0;
-      `--claim-gain` is REFUSED (exit 3) — a gain cannot be claimed without measured
-      candidate-vs-baseline evidence, so the catalog cannot grow by running this
-      stub. Informational/NON-blocking: it never gates CI and is not executed by
+      the candidate matrix (FEC ALWAYS arq:onreq hybrid; pure FEC arq:never is
+      BANNED, REFUSED exit 2 in every mode), and runs as a TWO-STAGE campaign:
+      `--stage screen` sweeps all 7 candidates × a reduced adverse grid at low reps
+      (=4) and emits the survivors set; `--stage deep` runs the deep set =
+      screen-survivors ∪ top-K(2)/family ∪ the high-loss SENTINEL cells
+      (STEADY=7,BURST=20 per candidate, ALWAYS) at reps=10, then applies `--analyze`
+      (exact Mann-Whitney U + Holm-Bonferroni across EVERY deep cell) and writes
+      verdict.json (promoted[...] or NULL). The sentinels are deep-tested even when
+      the screen rejected them — the anti-false-NULL rescue (Oracle O4). Each stage
+      runs a PORT_MISMATCH falsifiability control FIRST and ABORTS (exit 2) if it
+      passes. Modes: bare/`--dry-run`/`--help`/`--stage <s> --plan` exit 0; `--smoke`
+      runs the control then ONE bounded cell (needs CAP_NET_ADMIN + srtla-send-rs,
+      else SKIP exit 77; control-pass ⇒ SKIP 77); `--claim-gain` REFUSED (exit 3).
+      Informational/NON-blocking: it never gates CI and is not executed by
       run-matrix.sh --tier (which runs sender/receiver pairs, not scenarios). Full
-      protocol: docs/GAIN-HUNT-PROTOCOL.md. Run: tests/compat/scenarios/gain-hunt-matrix.sh --dry-run
+      protocol: docs/GAIN-HUNT-PROTOCOL.md. Run: tests/compat/scenarios/gain-hunt-matrix.sh --smoke
 
 excluded:
   - name: moblink-rust
