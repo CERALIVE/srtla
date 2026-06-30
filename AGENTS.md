@@ -146,7 +146,11 @@ The TS parser lives in `srt-sink/ts_continuity.h` (header-only, dependency-free)
 
 Registered in `matrix.yaml` as scenario `profile-validation-matrix` (tier: blocking, privileged: true). Run manually via `tests/compat/run-matrix.sh --tier blocking`. Results: all four non-FEC profiles (Balanced/Low-Latency/Resilient/Classic) PASS all six clauses; wire amplification ratios 1.054–1.078× (well under 1.10×). Evidence: `test-results/srt-receive-profiles/task-6-srt-receive-profiles.json`.
 
-The `reorder-stress.sh` scenario is parameterized (BITRATE_KBPS, RX_LATENCY_MS, NAKREPORT, LOSSMAXTTL, REORDERFREEZE, PROFILE_LABEL, NETEM_SEED) and now emits TS-continuity + SRT counters + `goodput_bps` + `wire_amp` into `result.json`. Default run is byte-identical to the pre-matrix behavior (Rule E).
+The `reorder-stress.sh` scenario is parameterized (BITRATE_KBPS, RX_LATENCY_MS, NAKREPORT, LOSSMAXTTL, REORDERFREEZE, PROFILE_LABEL, NETEM_SEED) plus the gain-hunt adverse-config axes (STEADY_LOSS_PCT, BURST_LOSS_PCT, RTT_SPREAD_MS — see Gain-hunt scaffold below) and emits TS-continuity + SRT counters + `goodput_bps` + `wire_amp` into `result.json`. Default run (all axes unset) is byte-identical to the pre-matrix behavior (Rule E).
+
+### Gain-hunt scaffold (FEC-mixture R&D)
+
+`tests/compat/scenarios/gain-hunt-matrix.sh` is the ORCHESTRATOR STUB for the FEC-mixture gain hunt — the campaign that decides whether any FEC packet-filter mixture earns a place in the operator-facing receiver-capability catalog (which ships EMPTY). It is a scaffold: it fixes the pre-registered "real gain + no regression" decision rule in code, enumerates the candidate-mixture matrix (FEC **always** `arq:onreq` hybrid; pure FEC `arq:never` is BANNED — present only as a control row), and lists the adverse-config axes it drives `reorder-stress.sh` across (STEADY_LOSS_PCT / BURST_LOSS_PCT / RTT_SPREAD_MS). It does **not** run the campaign (R&D track). Modes: bare / `--dry-run` / `--help` exit 0; `--claim-gain` is REFUSED (exit 3) — falsifiable, a gain cannot be claimed without measured evidence. Registered in `matrix.yaml` as `tier: informational` (NON-blocking; not run by `run-matrix.sh --tier`, which iterates pairs, not scenarios). Full protocol: [`docs/GAIN-HUNT-PROTOCOL.md`](docs/GAIN-HUNT-PROTOCOL.md). The adverse axes are additive on `reorder-stress.sh`: STEADY_LOSS_PCT (`netem loss <pct>%` on both links), BURST_LOSS_PCT (loss correlation % with steady, else `loss gemodel`), RTT_SPREAD_MS (extra slow-link delay; slow = 150 + spread).
 
 ### FEC connect-matrix
 
@@ -276,6 +280,26 @@ the keepalive cadence changed.
 
 No protocol/wire change, no config knob added beyond the constants above, and
 the `ENABLE_ALGO_COMPARISON` legacy path / `legacy_weight_percent` are untouched.
+
+## RECEIVER CAPABILITY RECONCILIATION
+
+Canonical decision record: [`docs/RECEIVER-RECONCILIATION.md`](../docs/RECEIVER-RECONCILIATION.md)
+
+**`lossmaxttl` calibration result (Task 1 A/B): winner = 40** (BELABOX parity).
+
+Both arms (30 vs 40) tied at `pkt_rcv_drop=0`, `ts_cc_errors=0`, equal goodput. The
+pre-registered tie-break rule resolves to 40 (BELABOX parity / max compat). This value
+is now locked into `irl-srt-server` L1 and L2 profiles (Task 4). Evidence:
+`test-results/srt-receive-profiles/lossmaxttl-3040.json`.
+
+**Gain-hunt scaffold (Task 2, pending):** `tests/compat/scenarios/gain-hunt-matrix.sh`
+will be an orchestrator stub documenting the pre-registered adverse-config A/B protocol
+and candidate-mixture matrix. Protocol doc: `docs/GAIN-HUNT-PROTOCOL.md`. The full
+campaign is an R&D track; the scaffold runs `--help`/dry-run only and does not run the
+full campaign. Registered in `matrix.yaml` as informational (non-blocking).
+
+**FEC policy:** FEC is always `arq:onreq` hybrid; pure FEC (`arq:never`) is BANNED.
+The mixture catalog is EMPTY until the gain-hunt evidence gate passes.
 
 ## ANTI-PATTERNS
 
