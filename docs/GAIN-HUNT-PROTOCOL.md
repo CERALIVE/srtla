@@ -13,7 +13,7 @@ tries to pass it.
 
 - **Decision record:** [`../../docs/RECEIVER-RECONCILIATION.md`](../../docs/RECEIVER-RECONCILIATION.md) §"Gain-Hunt Protocol" and the L1–L3 locked decisions.
 - **ADR cross-ref:** [`adr/ADR-002-srt-patch-necessity.md`](adr/ADR-002-srt-patch-necessity.md) — "C is SAFE": stock libsrt + `nakreport=0` + `lossmaxttl` is a proven baseline equivalent. The gain hunt borrows ADR-002's pre-registration discipline.
-- **Harness scaffold:** [`../tests/compat/scenarios/gain-hunt-matrix.sh`](../tests/compat/scenarios/gain-hunt-matrix.sh) — orchestrator **stub** (this effort). It documents the rule and the matrix and **does not run the campaign** (R&D track).
+- **Harness orchestrator:** [`../tests/compat/scenarios/gain-hunt-matrix.sh`](../tests/compat/scenarios/gain-hunt-matrix.sh) — the fully-wired two-stage screen→deep orchestrator (T-A6). It encodes the decision rule and the candidate matrix **and has run the campaign** — `--stage deep` collected the evidence and its `--analyze` stats layer wrote the verdict (**NULL**; see Status below).
 - **Measurement instrument:** [`../tests/compat/scenarios/reorder-stress.sh`](../tests/compat/scenarios/reorder-stress.sh) — the same A/B instrument the profile-validation matrix uses, now extended with the adverse-config axes below.
 
 > **Status:** RAN — verdict **NULL** (catalog stays empty). The two-stage

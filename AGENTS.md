@@ -319,11 +319,13 @@ pre-registered tie-break rule resolves to 40 (BELABOX parity / max compat). This
 is now locked into `irl-srt-server` L1 and L2 profiles (Task 4). Evidence:
 `test-results/srt-receive-profiles/lossmaxttl-3040.json`.
 
-**Gain-hunt scaffold (Task 2, pending):** `tests/compat/scenarios/gain-hunt-matrix.sh`
-will be an orchestrator stub documenting the pre-registered adverse-config A/B protocol
-and candidate-mixture matrix. Protocol doc: `docs/GAIN-HUNT-PROTOCOL.md`. The full
-campaign is an R&D track; the scaffold runs `--help`/dry-run only and does not run the
-full campaign. Registered in `matrix.yaml` as informational (non-blocking).
+**Gain-hunt orchestrator (Task 2, DONE):** `tests/compat/scenarios/gain-hunt-matrix.sh`
+is the fully-wired two-stage screen→deep orchestrator for the pre-registered
+adverse-config A/B protocol and candidate-mixture matrix. The campaign RAN under
+CAP_NET_ADMIN with the `srtla-send-rs` sender and produced a **NULL** verdict (no
+recipe cleared the gate; the catalog stays empty). Protocol doc: `docs/GAIN-HUNT-PROTOCOL.md`;
+full mechanics and current status are in the "Gain-hunt orchestrator (FEC×NAK×FREEZE)"
+section above. Registered in `matrix.yaml` as informational (non-blocking).
 
 **FEC policy:** FEC is always `arq:onreq` hybrid; pure FEC (`arq:never`) is BANNED.
 The mixture catalog is EMPTY until the gain-hunt evidence gate passes.

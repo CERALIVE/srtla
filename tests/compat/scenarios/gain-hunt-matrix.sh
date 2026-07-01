@@ -13,11 +13,14 @@
 # docs/GAIN-HUNT-PROTOCOL.md; this header is the executable echo of it.
 #
 # This driver wires the instrument (scenarios/reorder-stress.sh) for the SCREEN
-# matrix and a 1-cell --smoke self-test. The deep stage (per-cell adverse-axis
-# sweep + FEC-geometry sweep + Holm-Bonferroni stats) is the --stage deep seam,
-# filled in by a follow-up effort (T-A6). The campaign's PRIMARY sender is the
-# Rust fork srtla-send-rs (ADR-003): a run with no srtla-send-rs resolvable SKIPs
-# (exit 77) rather than measure the deprecated C srtla_send as if it were production.
+# matrix, a 1-cell --smoke self-test, and the DEEP stage (per-cell adverse-axis
+# sweep + Holm-Bonferroni stats over the survivors ∪ top-K ∪ sentinel deep set).
+# The two-stage screen→deep structure is fully implemented (T-A6); the campaign was
+# RUN under CAP_NET_ADMIN with the srtla-send-rs sender and produced a NULL verdict
+# (no recipe cleared the pre-registered gate — the catalog stays empty). The
+# campaign's PRIMARY sender is the Rust fork srtla-send-rs (ADR-003): a run with no
+# srtla-send-rs resolvable SKIPs (exit 77) rather than measure the deprecated C
+# srtla_send as if it were production.
 #
 # ===================== PRE-REGISTERED DECISION RULE =========================
 # "real gain + no regression" — fixed HERE, before any measurement exists. A
@@ -864,8 +867,9 @@ case "$MODE" in
 
   analyze)
     # §2 decision-rule statistics over ALREADY-MEASURED paired evidence. This COMPUTES
-    # a verdict from supplied per-rep results — it does not run the campaign, needs no
-    # CAP_NET_ADMIN and no sender, and is stdlib-only (scipy is absent on this box).
+    # a verdict from supplied per-rep results — it is the stats layer only, not the
+    # measurement driver, needs no CAP_NET_ADMIN and no sender, and is stdlib-only
+    # (scipy is absent on this box).
     [[ -e "$ANALYZE_PATH" ]] || die "--analyze: path not found: ${ANALYZE_PATH}"
     python3 - "$ANALYZE_PATH" <<'PY'
 import json, math, os, sys, glob
