@@ -16,9 +16,24 @@ tries to pass it.
 - **Harness scaffold:** [`../tests/compat/scenarios/gain-hunt-matrix.sh`](../tests/compat/scenarios/gain-hunt-matrix.sh) — orchestrator **stub** (this effort). It documents the rule and the matrix and **does not run the campaign** (R&D track).
 - **Measurement instrument:** [`../tests/compat/scenarios/reorder-stress.sh`](../tests/compat/scenarios/reorder-stress.sh) — the same A/B instrument the profile-validation matrix uses, now extended with the adverse-config axes below.
 
-> **Status:** WIRED (two-stage). The decision rule and candidate matrix are fixed
-> here and in the orchestrator. The orchestrator now runs the campaign as a
-> **two-stage screen→deep** sweep (T-A6): `--stage screen` sweeps all 7 candidates
+> **Status:** RAN — verdict **NULL** (catalog stays empty). The two-stage
+> screen→deep campaign was executed under `CAP_NET_ADMIN` with the `srtla-send-rs`
+> sender; the deep stage's built-in `--analyze` wrote the verdict. Evidence:
+> `test-results/gain-hunt/verdict.json` (`{"verdict":"NULL","n_cells":20,"promoted":[],"reason":"regression_in_>=1_cell"}`;
+> gitignored evidence dir, independently re-derivable via
+> `tests/compat/scenarios/gain-hunt-matrix.sh --analyze test-results/gain-hunt/deep`).
+> **Reason:** no candidate showed BOTH a Holm-significant real gain AND no regression
+> across the full deep set (20 cells: 0 screen-survivors, so the anti-false-NULL rescue
+> deep-tested top-K(2)/family + all 7 high-loss sentinels). One directional-gain cell
+> (`f0-n1-plain-s7-b0`, +3.3% goodput) was **not** Holm-significant (adj p=0.380);
+> 15/20 cells regressed. The FEC cells showed a caller-transport `ts_sync` artifact
+> (ffmpeg→`srt-live-transmit` re-mux, not a receiver defect), but no FEC cell showed
+> gain regardless. The stage's `PORT_MISMATCH=1` falsifiability control FAILED first
+> (`falsifiability_control:{pass:false,verified:true}`), so the NULL is well-formed.
+> The `low-latency-fec` FULL_PROFILE remains intentionally **unreachable** pending
+> future evidence — this campaign found no promotable FEC/NAK/FREEZE combo.
+>
+> **How it ran:** `--stage screen` sweeps all 7 candidates
 > (REORDERFREEZE × NAKREPORT × FEC, baseline excluded, `LOSSMAXTTL=40` held) across a
 > reduced adverse grid at low reps (=4) and emits the **survivors** set; `--stage
 > deep` runs the **deep set = screen-survivors ∪ top-K(2)/family ∪ the high-loss
@@ -30,9 +45,7 @@ tries to pass it.
 > Each stage runs a `PORT_MISMATCH=1` falsifiability control FIRST and ABORTS (exit 2)
 > if it passes. The **§2 statistics engine** is `--analyze`: exact Mann-Whitney U
 > (pure-stdlib — scipy is absent on the box) + Holm-Bonferroni across every cell (§5).
-> What remains for the R&D track (Wave B) is **running** the campaign under
-> `CAP_NET_ADMIN` to collect the evidence; T-A6 wired the structure, not the data. The
-> PRIMARY sender is `srtla-send-rs`; a run with no fork resolvable SKIPs (exit 77).
+> The PRIMARY sender is `srtla-send-rs`; a run with no fork resolvable SKIPs (exit 77).
 
 ---
 
