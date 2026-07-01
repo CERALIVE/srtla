@@ -279,9 +279,10 @@ STEADY_LOSS_PCT=3 BURST_LOSS_PCT=20 RTT_SPREAD_MS=150 \
 
 ## 6. Running the Full Campaign (Wave B R&D Track)
 
-The two-stage **structure** is wired (T-A6). What remains for Wave B is **running**
-it under `CAP_NET_ADMIN` to collect evidence — the orchestrator already drives every
-step below:
+The two-stage **structure** is wired (T-A6) and Wave B **already ran** it under
+`CAP_NET_ADMIN`, producing the **NULL** verdict recorded in the Status block above
+(`test-results/gain-hunt/verdict.json`). The steps below document how the
+orchestrator drove that run (and how to reproduce or re-run it in the future):
 
 1. **Stage 1 — screen (`--stage screen`).** Runs all 7 candidates × a reduced adverse
    grid (`STEADY_LOSS_PCT ∈ {3,7}`, `BURST_LOSS_PCT ∈ {0,20}`) paired/alternating vs
