@@ -219,6 +219,7 @@ MODE="notice"
 STAGE=""
 PLAN=0
 ANALYZE_PATH=""
+AGGREGATE_DEEP_DIR=""
 CANDIDATE=""
 BASELINE=""
 DECISION_RULE=""
@@ -233,6 +234,7 @@ while [[ $# -gt 0 ]]; do
     --smoke)         MODE="smoke"; shift ;;
     --stage)         MODE="stage"; STAGE="${2:?--stage needs screen|deep}"; shift 2 ;;
     --analyze)       MODE="analyze"; ANALYZE_PATH="${2:?--analyze needs a path}"; shift 2 ;;
+    --aggregate-deep) MODE="aggregate-deep"; AGGREGATE_DEEP_DIR="${2:?--aggregate-deep needs a deep dir}"; shift 2 ;;
     --claim-gain)    MODE="claim-gain"; shift ;;
     --candidate)     CANDIDATE="${2:?--candidate needs a value}"; shift 2 ;;
     --baseline)      BASELINE="${2:?--baseline needs a value}"; shift 2 ;;
@@ -679,12 +681,78 @@ do_deep() {
     bu="$(jq   -r ".cells[$i].burst"   "${ddir}/deep-manifest.json")"
     run_cell "${ddir}/${cell}" "$frz" "$nak" "$fec" "$cell" "$st" "$bu" "$DEEP_REPS"
   done
-  jq -n --slurpfile mani "${ddir}/deep-manifest.json" --arg dir "$ddir" \
-    '{stage:"deep", out_dir:$dir, deep_set:$mani[0]}' > "${GAIN_OUT}/deep-results.json"
   emit_verdict "$ddir"
+  write_deep_results "$ddir" "$GAIN_OUT"
   log ""
   log "  deep-results: ${GAIN_OUT}/deep-results.json"
   log "  verdict     : ${GAIN_OUT}/verdict.json"
+}
+
+# Aggregate the canonical deep-results.json: every deep cell (survivors ∪ top-K ∪
+# sentinel) with its per-cell U-stat + Holm-corrected p + guardrail outcomes (from
+# the co-located analyze-verdict.json) and its per-rep NETEM_SEED (pulled from the
+# rep JSONs). analyze-verdict.json is kept as-is (emit_verdict's raw stats source);
+# deep-results.json is the canonical, T-B3-shaped aggregate that merges the manifest,
+# the stats, and the seeds. Reusable standalone via --aggregate-deep for retroactive
+# regeneration over already-measured evidence (no privilege, no re-run of the campaign).
+write_deep_results() { # ddir gain_out
+  python3 - "$1" "$2" <<'PY'
+import glob, json, os, sys
+ddir, gain_out = sys.argv[1], sys.argv[2]
+
+def read_json(path, default):
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+mani = read_json(os.path.join(ddir, "deep-manifest.json"), {"cells": []})
+av = read_json(os.path.join(ddir, "analyze-verdict.json"), {"cells": {}})
+verdict = read_json(os.path.join(gain_out, "verdict.json"), {})
+av_cells = av.get("cells", {})
+
+def netem_seeds(cell):
+    seeds = set()
+    for arm in ("candidate", "baseline"):
+        for rep in glob.glob(os.path.join(ddir, cell, arm, "rep-*.json")):
+            cfg = (read_json(rep, {}).get("config") or {})
+            s = cfg.get("netem_seed")
+            if s is not None:
+                try:
+                    seeds.add(int(s))
+                except (TypeError, ValueError):
+                    pass
+    return sorted(seeds)
+
+cells = {}
+for m in mani.get("cells", []):
+    name = m["cell"]
+    stat = av_cells.get(name, {})
+    mwu = stat.get("mwu", {})
+    cells[name] = {
+        "family": m.get("family"), "freeze": m.get("freeze"), "nak": m.get("nak"),
+        "fec": m.get("fec"), "steady": m.get("steady"), "burst": m.get("burst"),
+        "sentinel": m.get("sentinel"), "why": m.get("why"),
+        "netem_seed": netem_seeds(name),
+        "u_stat": mwu.get("U"), "mwu_metric": mwu.get("metric"), "mwu_p": mwu.get("p"),
+        "holm_adjusted_p": stat.get("holm_adjusted_p"),
+        "holm_significant": stat.get("holm_significant"),
+        "gain": stat.get("gain"), "guardrails": stat.get("guardrails"),
+        "tripped_guardrails": stat.get("tripped_guardrails"),
+        "no_regression": stat.get("no_regression"), "medians": stat.get("medians"),
+        "n_candidate": stat.get("n_candidate"), "n_baseline": stat.get("n_baseline"),
+    }
+
+out = {"stage": "deep", "out_dir": ddir, "alpha": av.get("alpha", 0.05),
+       "verdict": verdict.get("verdict"), "n_cells": len(cells),
+       "n_survivors": mani.get("n_survivors", 0), "topk": mani.get("topk"),
+       "sentinel": mani.get("sentinel"), "deep_set": mani, "cells": cells}
+with open(os.path.join(gain_out, "deep-results.json"), "w") as fh:
+    json.dump(out, fh, indent=2, sort_keys=True)
+sys.stderr.write("deep-results: %d cells with per-cell U-stat + Holm p + guardrails + netem_seed\n"
+                 % len(cells))
+PY
 }
 
 case "$MODE" in
@@ -1068,6 +1136,19 @@ sys.stderr.write("================================================\n")
 sys.exit(0 if promoted else 1)
 PY
     exit $?
+    ;;
+
+  aggregate-deep)
+    [[ -d "$AGGREGATE_DEEP_DIR" ]] || die "--aggregate-deep: not a directory: ${AGGREGATE_DEEP_DIR}"
+    agg_out="$(cd -- "$(dirname -- "$AGGREGATE_DEEP_DIR")" && pwd)"
+    if [[ ! -f "${AGGREGATE_DEEP_DIR}/analyze-verdict.json" ]]; then
+      log "  no analyze-verdict.json — recomputing §2 stats from existing rep evidence"
+      bash "${BASH_SOURCE[0]}" --analyze "$AGGREGATE_DEEP_DIR" \
+        > "${AGGREGATE_DEEP_DIR}/analyze-verdict.json" 2> "${AGGREGATE_DEEP_DIR}/analyze.log" || true
+    fi
+    write_deep_results "$AGGREGATE_DEEP_DIR" "$agg_out"
+    log "  deep-results (aggregated): ${agg_out}/deep-results.json"
+    exit 0
     ;;
 
   claim-gain)
