@@ -1,0 +1,101 @@
+{
+  "_README": "Pre-computed expected verdicts for the gain-hunt golden fixtures. p_clean is the EXACT two-sided Mann-Whitney U p-value when all 10 candidate goodput samples strictly exceed all 10 baseline samples: U=100 (=m*n), U_min=0, p = 2 * P(U<=0) = 2 / C(20,10) = 2/184756. No scipy: the exact permutation rank-sum distribution is enumerated by a stdlib subset-sum DP in gain-hunt-matrix.sh --analyze. Verified against the textbook 3v3 case (p=0.1) and 4v4 separated case (p=2/70).",
+  "constants": {
+    "p_clean_exact": 1.082508822446903e-05,
+    "p_clean_fraction": "2/184756",
+    "holm_2cell_adjusted": 2.165017644893806e-05,
+    "alpha": 0.05
+  },
+  "gain-fixture.json": {
+    "verdict": "promoted",
+    "promoted": true,
+    "winner": "f1-n1-fec",
+    "reason": "real_gain_in_2_cell(s)_no_regression",
+    "real_gain_cells": [
+      "steady3-burst20",
+      "steady7-burst20"
+    ],
+    "regression_cells": {},
+    "cells": {
+      "steady3-burst20": {
+        "U": 100.0,
+        "p": 1.082508822446903e-05,
+        "holm_adjusted_p": 2.165017644893806e-05,
+        "no_regression": true,
+        "gain_win": true
+      },
+      "steady7-burst20": {
+        "U": 100.0,
+        "p": 1.082508822446903e-05,
+        "holm_adjusted_p": 2.165017644893806e-05,
+        "no_regression": true,
+        "gain_win": true
+      }
+    }
+  },
+  "regression-fixture.json": {
+    "verdict": "not_promoted",
+    "promoted": false,
+    "winner": "none",
+    "reason": "regression_in_>=1_cell",
+    "real_gain_cells": [],
+    "regression_cells": {
+      "steady3-burst20": [
+        "disconnects_zero"
+      ]
+    },
+    "cells": {
+      "steady3-burst20": {
+        "U": 100.0,
+        "p": 1.082508822446903e-05,
+        "holm_adjusted_p": 1.082508822446903e-05,
+        "no_regression": false,
+        "gain_win": true,
+        "tripped_guardrails": [
+          "disconnects_zero"
+        ]
+      }
+    }
+  },
+  "reverse-spam-fixture.json": {
+    "verdict": "not_promoted",
+    "promoted": false,
+    "winner": "none",
+    "reason": "regression_in_>=1_cell",
+    "real_gain_cells": [],
+    "regression_cells": {
+      "steady3-burst20": [
+        "reverse_wire_amp_le_110pct"
+      ]
+    },
+    "cells": {
+      "steady3-burst20": {
+        "U": 100.0,
+        "p": 1.082508822446903e-05,
+        "holm_adjusted_p": 1.082508822446903e-05,
+        "no_regression": false,
+        "gain_win": true,
+        "tripped_guardrails": [
+          "reverse_wire_amp_le_110pct"
+        ]
+      }
+    }
+  },
+  "tie-fixture.json": {
+    "verdict": "not_promoted",
+    "promoted": false,
+    "winner": "none",
+    "reason": "no_real_gain",
+    "real_gain_cells": [],
+    "regression_cells": {},
+    "cells": {
+      "steady3-burst20": {
+        "U": 50.0,
+        "p": 1.0,
+        "holm_adjusted_p": 1.0,
+        "no_regression": true,
+        "gain_win": false
+      }
+    }
+  }
+}

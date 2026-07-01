@@ -80,6 +80,43 @@
 #                         the cross-link skew past the built-in 50/150ms band
 #                         (slow delay = 150 + RTT_SPREAD_MS). Empty = 150ms.
 #
+# FEC caller passthrough (FEC arms of the gain hunt). Empty default = today's
+# ffmpeg-direct SRT caller, byte-identical (Rule E):
+#   CALLER_PACKETFILTER   SRT FEC packet-filter config (must match `^fec,`). When
+#                         set, ffmpeg becomes the MPEG-TS generator and the SRT
+#                         caller is srt-live-transmit carrying `&packetfilter=<v>`
+#                         — because ffmpeg's libsrt wrapper has a fixed option
+#                         allow-list with NO `packetfilter` (appending it makes
+#                         ffmpeg HARD-FAIL "Option not found"), whereas
+#                         srt-live-transmit (libsrt 1.5.5) accepts it. Pair with a
+#                         FEC-accepting sink via SINK_EXTRA_ARGS="--packetfilter fec".
+#                         Requires srt-live-transmit on PATH (absent => SKIP, exit
+#                         77). Pure FEC (arq:never) is refused — FEC is always an
+#                         arq:onreq hybrid. The negotiated filter the sink accepted
+#                         is echoed to result.json as sink.negotiated_packetfilter.
+#
+# Sender selection (ADR-003; the campaign's PRIMARY sender is the Rust fork). Empty
+# default = today's C srtla_send from the build dir, byte-identical (Rule E):
+#   SRTLA_SEND_RS_BIN     path to the srtla-send-rs binary (the Rust fork sender,
+#                         CLI-compatible: srtla_send <listen> <host> <port> <ips>).
+#                         When set+executable it REPLACES the C srtla_send as the
+#                         sender (production-representative arm). Falls back to a
+#                         `srtla_send_rs` on PATH when this is empty. result.json
+#                         records which sender ran as config.sender_kind (c|rust).
+#   REQUIRE_RS_SENDER     0|1 -> when 1 and no srtla-send-rs is resolvable, SKIP
+#                         cleanly (exit 77) instead of measuring the C srtla_send as
+#                         if it were production. The gain-hunt orchestrator sets this
+#                         so a missing fork binary SKIPs like a missing compat pair
+#                         rather than silently falsifying the campaign. Default unset
+#                         = the C sender is used (existing callers unaffected, Rule E).
+#
+# Reverse-channel metric (receiver->sender egress, e.g. periodic-NAK cost). The
+# veth peer inside the netns has no countable root qdisc by default (noqueue), so a
+# prio root is installed inside the netns on $PEERIF and its Sent byte counter is
+# read after the run, emitting metrics.reverse_wire_bytes and metrics.reverse_wire_amp
+# (reverse_wire_bytes / bytes_received). This makes the NAK-on reverse cost visible
+# so a NAK-on profile cannot false-promote on forward-wire amplification alone.
+#
 # The recipe-shorthand maps to the 4 non-FEC receive profiles like so (see the
 # A/B driver scenarios/profile-validation-matrix.sh): freeze+NAK (Balanced /
 # Low-Latency / Resilient) = REORDERFREEZE=1 NAKREPORT=1; freeze+NAK-off
@@ -137,6 +174,12 @@ PORT_MISMATCH="${PORT_MISMATCH:-}"
 STEADY_LOSS_PCT="${STEADY_LOSS_PCT:-}"
 BURST_LOSS_PCT="${BURST_LOSS_PCT:-}"
 RTT_SPREAD_MS="${RTT_SPREAD_MS:-}"
+CALLER_PACKETFILTER="${CALLER_PACKETFILTER:-}"
+SRTLA_SEND_RS_BIN="${SRTLA_SEND_RS_BIN:-}"
+REQUIRE_RS_SENDER="${REQUIRE_RS_SENDER:-}"
+if [[ -z "$SRTLA_SEND_RS_BIN" ]] && command -v srtla_send_rs >/dev/null 2>&1; then
+  SRTLA_SEND_RS_BIN="$(command -v srtla_send_rs)"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -155,13 +198,32 @@ done
 [[ -z "$LOSSMAXTTL" || "$LOSSMAXTTL" =~ ^[0-9]+$ ]] || die "LOSSMAXTTL must be a non-negative integer"
 [[ -z "$NETEM_SEED" || "$NETEM_SEED" =~ ^[0-9]+$ ]] || die "NETEM_SEED must be a non-negative integer"
 [[ -z "$PORT_MISMATCH" || "$PORT_MISMATCH" =~ ^[01]$ ]] || die "PORT_MISMATCH must be 0 or 1"
+[[ -z "$REQUIRE_RS_SENDER" || "$REQUIRE_RS_SENDER" =~ ^[01]$ ]] || die "REQUIRE_RS_SENDER must be 0 or 1"
 [[ -z "$STEADY_LOSS_PCT" || "$STEADY_LOSS_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "STEADY_LOSS_PCT must be a non-negative number"
 [[ -z "$BURST_LOSS_PCT" || "$BURST_LOSS_PCT" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "BURST_LOSS_PCT must be a non-negative number"
 [[ -z "$RTT_SPREAD_MS" || "$RTT_SPREAD_MS" =~ ^[0-9]+$ ]] || die "RTT_SPREAD_MS must be a non-negative integer"
+# CALLER_PACKETFILTER: empty = ffmpeg-direct caller (today's path). Set => FEC arm,
+# must be an SRT FEC packet-filter config (`fec,...`); pure FEC (arq:never) is BANNED
+# (FEC is always an arq:onreq hybrid here, per docs/RECEIVER-RECONCILIATION.md).
+if [[ -n "$CALLER_PACKETFILTER" ]]; then
+  [[ "$CALLER_PACKETFILTER" =~ ^fec, ]] || die "CALLER_PACKETFILTER must start with 'fec,' (got '$CALLER_PACKETFILTER')"
+  [[ "$CALLER_PACKETFILTER" == *arq:never* ]] && die "CALLER_PACKETFILTER must not use arq:never (pure FEC is BANNED)"
+fi
 
 for tool in ffmpeg jq; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool '$tool' not found in PATH"
 done
+
+# FEC caller needs srt-live-transmit (ffmpeg's libsrt wrapper has no packetfilter
+# option). SKIP-cleanly (exit 77, this scenario's SKIP convention) when the FEC
+# arm is requested but the transmitter is absent — falsifiable, never best-effort.
+if [[ -n "$CALLER_PACKETFILTER" ]] && ! command -v srt-live-transmit >/dev/null 2>&1; then
+  log "SKIP reorder-stress: CALLER_PACKETFILTER set but srt-live-transmit not in PATH (FEC caller needs it)"
+  mkdir -p "$RESULTS_DIR"
+  printf '{"scenario":"reorder-stress","skipped":true,"reason":"CALLER_PACKETFILTER set but srt-live-transmit absent"}\n' \
+    > "${RESULTS_DIR}/result.json"
+  exit 77
+fi
 
 # Capability gate — SKIP-PRIVILEGED (exit 77, the code netem_require returns and
 # the sibling netem scenarios use) if we cannot shape the network.
@@ -193,6 +255,24 @@ BUILD_DIR="$(resolve_build_dir)" || die \
 SRT_SINK="${BUILD_DIR}/tests/compat/srt-sink/srt-sink"
 SRTLA_REC="${BUILD_DIR}/srtla_rec"
 SRTLA_SEND="${BUILD_DIR}/srtla_send"
+
+# Sender selection (ADR-003). The fork srtla-send-rs is the production sender and
+# is CLI-identical to the C srtla_send, so the same invocation drives either. When
+# SRTLA_SEND_RS_BIN resolves it becomes the sender; REQUIRE_RS_SENDER=1 makes a
+# missing fork a clean SKIP rather than a silent C-sender measurement.
+SENDER_BIN="$SRTLA_SEND"
+SENDER_KIND="c"
+if [[ -n "$SRTLA_SEND_RS_BIN" ]]; then
+  [[ -x "$SRTLA_SEND_RS_BIN" ]] || die "SRTLA_SEND_RS_BIN '$SRTLA_SEND_RS_BIN' is not executable"
+  SENDER_BIN="$SRTLA_SEND_RS_BIN"
+  SENDER_KIND="rust"
+elif [[ "$REQUIRE_RS_SENDER" == "1" ]]; then
+  log "SKIP reorder-stress: REQUIRE_RS_SENDER=1 but no srtla-send-rs resolvable (set SRTLA_SEND_RS_BIN); refusing to measure C srtla_send as production"
+  mkdir -p "$RESULTS_DIR"
+  printf '{"scenario":"reorder-stress","skipped":true,"reason":"REQUIRE_RS_SENDER=1 but SRTLA_SEND_RS_BIN unset"}\n' \
+    > "${RESULTS_DIR}/result.json"
+  exit 77
+fi
 
 # Absolutise the loader path so it resolves regardless of srt-sink's cwd (the
 # caller may pass it relative, e.g. test-results/.../lib).
@@ -251,6 +331,7 @@ rm -rf "$RESULTS_DIR"; mkdir -p "$RESULTS_DIR"
 RX_LOG="${RESULTS_DIR}/receiver.log"
 TX_LOG="${RESULTS_DIR}/sender.log"
 FF_LOG="${RESULTS_DIR}/ffmpeg.log"
+SLT_LOG="${RESULTS_DIR}/srt-live-transmit.log"
 SINK_LOG="${RESULTS_DIR}/sink.log"
 SINK_JSON="${RESULTS_DIR}/sink.json"
 IPS_FILE="${RESULTS_DIR}/ips.txt"
@@ -309,6 +390,17 @@ qdisc_sent_bytes() { # dev handle(e.g. "1:") -> integer
   printf '%s' "${n:-0}"
 }
 
+# Same Sent-bytes read but INSIDE the receiver netns — the reverse channel
+# (srtla_rec/srt-sink -> sender: ACK/NAK/keepalive) leaves over $PEERIF's egress,
+# which the host-side counter never sees. Reads the prio root installed on $PEERIF.
+ns_qdisc_sent_bytes() { # dev handle(e.g. "1:") -> integer
+  local n
+  n="$(ip netns exec "$NS" tc -s qdisc show dev "$1" 2>/dev/null | awk -v h="$2" '
+        $1=="qdisc" && $3==h {f=1; next}
+        f && $1=="Sent" {print $2; exit}')"
+  printf '%s' "${n:-0}"
+}
+
 setup_topology() {
   ip link set lo up 2>/dev/null || true   # host-side loopback (needed under a fresh netns / unshare)
 
@@ -323,6 +415,12 @@ setup_topology() {
   ip netns exec "$NS" ip addr add "${RX_IP}/${PFX}" dev "$PEERIF" || die "peer addr failed"
   ip netns exec "$NS" ip link set "$PEERIF" up         || die "peer link up failed"
   ip netns exec "$NS" ip link set lo up                || true
+
+  # Countable root qdisc on the receiver-side egress so the reverse channel
+  # (ACK/NAK/keepalive back to the sender) has a Sent-bytes counter; veth peers
+  # default to noqueue with no usable stats. All bands fold to 1:1 (priomap all 0).
+  ip netns exec "$NS" tc qdisc add dev "$PEERIF" root handle 1: prio bands 3 \
+     priomap 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0                                    || die "reverse qdisc failed"
 
   # Per-source egress shaping: classful prio + u32(src) -> two netem bands.
   # priomap routes all unclassified IP to band 1:3 (passthrough), so only the
@@ -379,7 +477,8 @@ wait_for_marker "$RX_LOG" "srtla_rec is now running" 5 || die "receiver never ca
 printf '%s\n%s\n' "$SRC_A" "$SRC_B" > "$IPS_FILE"
 TARGET_SRTLA_PORT="$SRTLA_PORT"
 [[ "$PORT_MISMATCH" == "1" ]] && TARGET_SRTLA_PORT=$(( SRTLA_PORT + 1 ))   # falsifiability control: wrong port => no bytes => MUST fail
-RUST_LOG="${RUST_LOG:-info}" "$SRTLA_SEND" "$LOCAL_SRT_PORT" "$RX_IP" "$TARGET_SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
+log "    sender: ${SENDER_KIND} (${SENDER_BIN})"
+RUST_LOG="${RUST_LOG:-info}" "$SENDER_BIN" "$LOCAL_SRT_PORT" "$RX_IP" "$TARGET_SRTLA_PORT" "$IPS_FILE" >"$TX_LOG" 2>&1 &
 TX_PID=$!; track "$TX_PID"
 sleep 0.6
 
@@ -392,11 +491,30 @@ SRT_OPTS="mode=caller&transtype=live&latency=${SRT_LATENCY_US}&peerlatency=${SRT
 # source so the mpeg2video encoder actually emits the requested multi-Mbps target.
 FF_SIZE=320x240; FF_RATE=25
 if [[ "$BITRATE_KBPS" -ge 4000 ]]; then FF_SIZE=1280x720; FF_RATE=30; fi
+if [[ -z "$CALLER_PACKETFILTER" ]]; then
+# Unset path: ffmpeg is the SRT caller directly. Kept byte-identical to the
+# pre-FEC form (Rule E) — see test-results/a2-rule-e-diff.txt.
 ffmpeg -hide_banner -loglevel warning -re \
   -f lavfi -i "testsrc2=size=${FF_SIZE}:rate=${FF_RATE}" -c:v mpeg2video -b:v "${BITRATE_KBPS}k" -f mpegts \
   "srt://127.0.0.1:${LOCAL_SRT_PORT}?${SRT_OPTS}" \
   >"$FF_LOG" 2>&1 &
 FF_PID=$!; track "$FF_PID"
+else
+  # FEC path: ffmpeg becomes the MPEG-TS generator (stdout); srt-live-transmit is
+  # the SRT caller carrying &packetfilter (libsrt 1.5.5, FEC-capable). $! is the
+  # tail of the pipe (srt-live-transmit); killing it SIGPIPEs ffmpeg on teardown.
+  # srt-live-transmit URI latency is in MILLISECONDS (ffmpeg's was microseconds),
+  # and `timeout` is an ffmpeg-only libsrt option — reusing $SRT_OPTS here would
+  # set an 800s buffer and deliver zero bytes, so build SRT options afresh in ms.
+  SLT_OPTS="mode=caller&transtype=live&latency=${SRT_LATENCY_MS}&peerlatency=${SRT_LATENCY_MS}&sndbuf=24000000"
+  ffmpeg -hide_banner -loglevel warning -re \
+    -f lavfi -i "testsrc2=size=${FF_SIZE}:rate=${FF_RATE}" -c:v mpeg2video -b:v "${BITRATE_KBPS}k" -f mpegts - \
+    2>"$FF_LOG" \
+    | srt-live-transmit -chunk:1316 "file://con" \
+        "srt://127.0.0.1:${LOCAL_SRT_PORT}?${SLT_OPTS}&packetfilter=${CALLER_PACKETFILTER}" \
+        >"$SLT_LOG" 2>&1 &
+  FF_PID=$!; track "$FF_PID"
+fi
 
 handshake=false
 wait_for_marker "$RX_LOG" "Group registered" 10 && handshake=true
@@ -440,12 +558,15 @@ sleep "$PHASE_SEC"
 reorder_p1="$(qdisc_sent_pkts "$HOSTIF" "10:")"   # ... after
 band_b_pkts="$(qdisc_sent_pkts "$HOSTIF" "20:")"  # slow-link total (asymmetry proof)
 wire_bytes="$(qdisc_sent_bytes "$HOSTIF" "1:")"   # total bonded forward-wire egress (root prio)
-{ printf '=== after phase ii (phase ii end) ===\n'; tc -s qdisc show dev "$HOSTIF"; } >>"$TC_LOG" 2>&1
+reverse_wire_bytes="$(ns_qdisc_sent_bytes "$PEERIF" "1:")"   # receiver->sender egress (reverse channel)
+{ printf '=== after phase ii (phase ii end) ===\n'; tc -s qdisc show dev "$HOSTIF"; \
+  printf '=== reverse channel (peer egress, in netns) ===\n'; ip netns exec "$NS" tc -s qdisc show dev "$PEERIF"; } >>"$TC_LOG" 2>&1
 
 [[ "$reorder_p0" =~ ^[0-9]+$ ]] || reorder_p0=0
 [[ "$reorder_p1" =~ ^[0-9]+$ ]] || reorder_p1=0
 [[ "$band_b_pkts" =~ ^[0-9]+$ ]] || band_b_pkts=0
 [[ "$wire_bytes" =~ ^[0-9]+$ ]] || wire_bytes=0
+[[ "$reverse_wire_bytes" =~ ^[0-9]+$ ]] || reverse_wire_bytes=0
 reorder_pkts=$(( reorder_p1 - reorder_p0 ))
 [[ "$reorder_pkts" -lt 0 ]] && reorder_pkts=0
 
@@ -485,10 +606,15 @@ for v in ts_pkts pkt_loss pkt_drop pkt_retr; do [[ "${!v}" =~ ^[0-9]+$ ]] || pri
 # the same two quantities ADR-002's pre-registered "equal" rule compares.
 goodput=0; [[ "$duration_s" -gt 0 ]] && goodput=$(( bytes / duration_s ))
 wire_amp="$(awk -v w="$wire_bytes" -v b="$bytes" 'BEGIN{ printf "%.4f", (b>0 ? w/b : 0) }')"
+reverse_wire_amp="$(awk -v w="$reverse_wire_bytes" -v b="$bytes" 'BEGIN{ printf "%.4f", (b>0 ? w/b : 0) }')"
 
 # libsrt version straight from the Task-4 srt-sink banner (proves which build ran).
 libsrt_ver="$(sed -n 's/^srt-sink: libsrt version \([0-9.]*\).*/\1/p' "$SINK_LOG" 2>/dev/null | head -1)"
 [[ -n "$libsrt_ver" ]] || libsrt_ver="unknown"
+
+# Negotiated SRT packet-filter the sink accepted (non-empty => FEC was negotiated
+# end-to-end on the FEC arm; "" when the caller sent plain or the sink cleared it).
+negotiated_pf="$(jq -r '.packetfilter // ""' "$SINK_JSON" 2>/dev/null || echo "")"
 
 # --------------------------------------------------------------------------- #
 # Verdict (DEFAULT condition). A/B/C analysis is NOT decided here (Task 16).   #
@@ -523,11 +649,15 @@ jq -n \
   --arg reorderfreeze "${REORDERFREEZE:-default}" --arg netem_seed "${NETEM_SEED:-none}" \
   --arg steady_loss_pct "${STEADY_LOSS_PCT:-none}" --arg burst_loss_pct "${BURST_LOSS_PCT:-none}" \
   --arg rtt_spread_ms "${RTT_SPREAD_MS:-none}" \
+  --arg caller_packetfilter "${CALLER_PACKETFILTER:-none}" \
+  --arg negotiated_packetfilter "$negotiated_pf" \
   --argjson ts_sync_errors "$ts_sync" --argjson ts_cc_errors "$ts_cc" \
   --argjson ts_packets "$ts_pkts" --argjson pkt_rcv_loss "$pkt_loss" \
   --argjson pkt_rcv_drop "$pkt_drop" --argjson pkt_retrans "$pkt_retr" \
   --argjson goodput_bps "$goodput" --argjson wire_bytes "$wire_bytes" \
   --argjson wire_amp "$wire_amp" \
+  --argjson reverse_wire_bytes "$reverse_wire_bytes" --argjson reverse_wire_amp "$reverse_wire_amp" \
+  --arg sender_kind "$SENDER_KIND" --arg sender_bin "$SENDER_BIN" \
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{
     scenario:"reorder-stress", pass:$pass, profile:$profile,
@@ -539,11 +669,13 @@ jq -n \
             nakreport:$nakreport, lossmaxttl:$lossmaxttl,
             reorderfreeze:$reorderfreeze, netem_seed:$netem_seed,
             steady_loss_pct:$steady_loss_pct, burst_loss_pct:$burst_loss_pct,
-            rtt_spread_ms:$rtt_spread_ms},
+            rtt_spread_ms:$rtt_spread_ms, caller_packetfilter:$caller_packetfilter,
+            sender_kind:$sender_kind, sender_bin:$sender_bin},
     sink:{bytes_received:$bytes, disconnects:$disconnects, duration_s:$duration_s,
           libsrt_version:$libsrt, libsrt_path:$sink_libsrt_path,
-          extra_args:$sink_extra_args},
+          extra_args:$sink_extra_args, negotiated_packetfilter:$negotiated_packetfilter},
     metrics:{goodput_bps:$goodput_bps, wire_bytes:$wire_bytes, wire_amp:$wire_amp,
+             reverse_wire_bytes:$reverse_wire_bytes, reverse_wire_amp:$reverse_wire_amp,
              ts_packets:$ts_packets, ts_sync_errors:$ts_sync_errors,
              ts_cc_errors:$ts_cc_errors, pkt_rcv_loss:$pkt_rcv_loss,
              pkt_rcv_drop:$pkt_rcv_drop, pkt_retrans:$pkt_retrans},
@@ -558,7 +690,7 @@ jq -n \
 # so `grep -E 'bytes_received=[0-9]+ disconnects=0'` matches on a PASS run).
 log ""
 log "reorder-stress: bytes_received=${bytes} disconnects=${disc} duration=${duration_s}s libsrt=${libsrt_ver} reorder_pkts=${reorder_pkts} slow_link_pkts=${band_b_pkts}"
-log "reorder-stress[ab]: profile=${PROFILE_LABEL} goodput_bps=${goodput} wire_amp=${wire_amp} ts_sync_errors=${ts_sync} ts_cc_errors=${ts_cc} pkt_rcv_drop=${pkt_drop} pkt_retrans=${pkt_retr}"
+log "reorder-stress[ab]: profile=${PROFILE_LABEL} sender=${SENDER_KIND} goodput_bps=${goodput} wire_amp=${wire_amp} reverse_wire_amp=${reverse_wire_amp} ts_sync_errors=${ts_sync} ts_cc_errors=${ts_cc} pkt_rcv_drop=${pkt_drop} pkt_retrans=${pkt_retr}"
 log ""
 log "================ reorder-stress summary ================"
 log "  profile=${PROFILE_LABEL} bitrate=${BITRATE_KBPS}k rx_latency=${RX_LATENCY_MS}ms"
@@ -568,7 +700,8 @@ log "  handshake_ok=${handshake_ok} (both_links_added=${both_links_added})"
 log "  bytes_ok=${bytes_ok} (bytes=${bytes} >= 5000) disc_ok=${disc_ok} (disc=${disc})"
 log "  duration_ok=${duration_ok} (duration=${duration_s}s >= 30)"
 log "  reorder_active=${reorder_active} (configured=${reorder_configured} phase_ii_pkts=${reorder_pkts})"
-log "  equal-gate signal: goodput_bps=${goodput} wire_amp=${wire_amp} ts_sync=${ts_sync} ts_cc=${ts_cc} pkt_drop=${pkt_drop} pkt_retrans=${pkt_retr}"
+log "  equal-gate signal: goodput_bps=${goodput} wire_amp=${wire_amp} reverse_wire_amp=${reverse_wire_amp} ts_sync=${ts_sync} ts_cc=${ts_cc} pkt_drop=${pkt_drop} pkt_retrans=${pkt_retr}"
+log "  reverse channel: reverse_wire_bytes=${reverse_wire_bytes} reverse_wire_amp=${reverse_wire_amp} | sender=${SENDER_KIND}"
 log "  libsrt=${libsrt_ver} loader=${SINK_RESOLVED:-<system default>}"
 log "  result: ${RESULT_JSON}"
 log "======================================================="
