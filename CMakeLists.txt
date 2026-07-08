@@ -15,8 +15,9 @@ include(FetchContent)
 # Fetch and build spdlog statically
 FetchContent_Declare(
     spdlog
-    GIT_REPOSITORY https://github.com/irlserver/spdlog.git
-    GIT_TAG 1.9.2
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    # v1.17.0
+    GIT_TAG 79524ddd08a4ec981b7fea76afd08ee05f83755d
 )
 set(SPDLOG_BUILD_SHARED OFF CACHE BOOL "Build spdlog as shared library")
 set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "Build spdlog examples")

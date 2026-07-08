@@ -96,8 +96,8 @@ sudo make install
 **Dependencies:**
 - CMake 3.16+
 - C++17 compiler
-- spdlog (fetched automatically via CMake)
-- argparse (included in deps/)
+- spdlog v1.17.0 (fetched automatically via CMake, pinned by SHA)
+- argparse v3.2 (included in deps/, pinned by submodule SHA)
 
 ## Documentation
 
