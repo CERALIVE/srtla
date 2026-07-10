@@ -72,15 +72,59 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION} (Channel: ${CHANNEL})"
 
+  validate:
+    name: Validate release
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang-tidy cmake pkg-config ccache python3-yaml
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-release-validation-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-release-validation-
+
+      - name: Check workflow contracts
+        run: |
+          tests/workflow-contracts.sh
+          tests/workflow-contracts-negative.sh
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DSRTLA_BUILD_TESTS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Run clang-tidy
+        run: cmake --build build --target lint
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
   build-deb:
     name: Build Debian Package (${{ matrix.arch }})
     needs: calculate-version
     runs-on: ${{ matrix.runner }}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
     strategy:
       matrix:
         include:
-          - arch: amd64
-            runner: ubuntu-latest
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
@@ -92,11 +136,20 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config ruby-dev
+          sudo apt-get install -y build-essential cmake pkg-config ruby-dev ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.arch }}-
 
       - name: Build srtla
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DSRTLA_BUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX=/usr
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DSRTLA_BUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build -j"$(nproc)"
           DESTDIR="$PWD/install" cmake --install build
 
@@ -142,13 +195,100 @@ jobs:
         with:
           name: srtla-${{ matrix.arch }}
           path: |
-            dist/*.deb
-            dist/*.tar.gz
-            dist/*.sha256
+            dist/srtla_${{ needs.calculate-version.outputs.version }}_${{ matrix.arch }}.deb
+            dist/srtla_${{ needs.calculate-version.outputs.version }}_${{ matrix.arch }}.tar.gz
+            dist/srtla_${{ needs.calculate-version.outputs.version }}_${{ matrix.arch }}.deb.sha256
+            dist/srtla_${{ needs.calculate-version.outputs.version }}_${{ matrix.arch }}.tar.gz.sha256
+
+  build-deb-focal:
+    name: Build Ubuntu 20.04 Package (amd64)
+    needs: calculate-version
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - name: Install Focal build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y \
+            build-essential ca-certificates ccache cmake git pkg-config ruby-dev zstd
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-focal-amd64-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-focal-amd64-
+
+      - name: Configure Focal package build
+        run: |
+          cmake -B build-focal -DCMAKE_BUILD_TYPE=Release -DSRTLA_BUILD_TESTS=ON \
+            -DINSTALL_GTEST=OFF -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build Focal package
+        run: cmake --build build-focal -j"$(nproc)"
+
+      - name: Test Focal package build
+        working-directory: build-focal
+        run: ctest --output-on-failure
+
+      - name: Stage Focal package payload
+        run: DESTDIR="$PWD/install-focal" cmake --install build-focal
+
+      - name: Install FPM
+        run: gem install fpm --no-document
+
+      - name: Create Focal packages
+        env:
+          VERSION: ${{ needs.calculate-version.outputs.version }}
+        run: |
+          mkdir -p dist
+
+          fpm -s dir -t deb \
+            -n srtla \
+            -v "${VERSION}" \
+            -a amd64 \
+            --description "SRTLA - SRT Link Aggregation receiver (srtla_rec)" \
+            --maintainer "CERALIVE <contact@ceralive.com>" \
+            --url "https://github.com/CERALIVE/srtla" \
+            --license "AGPL-3.0" \
+            -p "dist/srtla_${VERSION}_amd64.deb" \
+            install-focal/usr/=/usr/
+
+          mkdir -p "tarball-focal/srtla-${VERSION}"
+          cp -r install-focal/usr/* "tarball-focal/srtla-${VERSION}/"
+          tar -C tarball-focal -czvf \
+            "dist/srtla_${VERSION}_amd64.tar.gz" "srtla-${VERSION}"
+
+          cd dist
+          sha256sum "srtla_${VERSION}_amd64.deb" \
+            > "srtla_${VERSION}_amd64.deb.sha256"
+          sha256sum "srtla_${VERSION}_amd64.tar.gz" \
+            > "srtla_${VERSION}_amd64.tar.gz.sha256"
+
+      - name: Upload Focal artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: srtla-amd64
+          path: |
+            dist/srtla_${{ needs.calculate-version.outputs.version }}_amd64.deb
+            dist/srtla_${{ needs.calculate-version.outputs.version }}_amd64.tar.gz
+            dist/srtla_${{ needs.calculate-version.outputs.version }}_amd64.deb.sha256
+            dist/srtla_${{ needs.calculate-version.outputs.version }}_amd64.tar.gz.sha256
 
   publish:
     name: Publish receiver .deb
-    needs: [calculate-version, build-deb]
+    needs: [calculate-version, validate, build-deb, build-deb-focal]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -168,21 +308,6 @@ jobs:
           cp artifacts/srtla-arm64/*.sha256 dist/release/
           cp artifacts/srtla-amd64/*.sha256 dist/release/
 
-      # No per-repo APT metadata here: index ownership is centralized in
-      # CERALIVE/apt-worker. This job attaches the receiver .deb to the GitHub
-      # release, then fires an `apt-reindex` repository_dispatch (below) so the
-      # worker regenerates and signs Packages/Release once per channel — no
-      # per-repo reindex race. R2 upload is handled by apt-worker.
-
-      - name: Trigger centralized APT reindex
-        uses: peter-evans/repository-dispatch@v4
-        with:
-          token: ${{ secrets.CERALIVE_DISPATCH_TOKEN }}
-          repository: CERALIVE/apt-worker
-          event-type: apt-reindex
-          client-payload: >-
-            {"component":"srtla","repo":"srtla","channel":"${{ needs.calculate-version.outputs.channel }}","tag":"v${{ needs.calculate-version.outputs.version }}","version":"${{ needs.calculate-version.outputs.version }}"}
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -201,23 +326,21 @@ jobs:
 
             ### Dependency Chain
             ```
-            srt
-              └── srtla (this package)
-                    │
-                    └── Used by: cerastream → ceralive-device
+            srtla (receiver-only)
+              └── Server-side SRTLA ingest deployments
             ```
 
             ### Debian Packages
             | Architecture | Package |
             |--------------|---------|
             | ARM64 | `srtla_${{ needs.calculate-version.outputs.version }}_arm64.deb` |
-            | AMD64 | `srtla_${{ needs.calculate-version.outputs.version }}_amd64.deb` |
+            | AMD64 (Ubuntu 20.04 compatible) | `srtla_${{ needs.calculate-version.outputs.version }}_amd64.deb` |
 
             ### Binary Archives
             | Architecture | Archive |
             |--------------|---------|
             | ARM64 | `srtla_${{ needs.calculate-version.outputs.version }}_arm64.tar.gz` |
-            | AMD64 | `srtla_${{ needs.calculate-version.outputs.version }}_amd64.tar.gz` |
+            | AMD64 (Ubuntu 20.04 compatible) | `srtla_${{ needs.calculate-version.outputs.version }}_amd64.tar.gz` |
 
             ### Installation
 

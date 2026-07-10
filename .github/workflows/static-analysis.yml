@@ -16,7 +16,7 @@ concurrency:
 jobs:
   clang-tidy:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -31,28 +31,25 @@ jobs:
             cmake \
             pkg-config \
             libspdlog-dev \
-            ccache
-      
-      - name: Cache ccache
-        uses: actions/cache@v6
-        with:
-          path: ~/.ccache
-          key: ccache-${{ runner.os }}-clang-tidy-${{ github.sha }}
-          restore-keys: |
-            ccache-${{ runner.os }}-clang-tidy-
-      
-      - name: Configure CMake
+            python3-yaml
+
+      - name: Check workflow contracts
         run: |
-          cmake -B build -DSRTLA_BUILD_TESTS=OFF -DSRTLA_ENABLE_CLANG_TIDY=OFF \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-      
+          tests/workflow-contracts.sh
+          tests/workflow-contracts-negative.sh
+
+      - name: Configure CMake
+        run: cmake -B build -DSRTLA_BUILD_TESTS=OFF -DSRTLA_ENABLE_CLANG_TIDY=OFF
+
       - name: Run clang-tidy
         run: |
           cmake --build build --target lint
 
   test:
     runs-on: ubuntu-latest
-    
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -71,7 +68,7 @@ jobs:
       - name: Cache ccache
         uses: actions/cache@v6
         with:
-          path: ~/.ccache
+          path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ runner.os }}-test-${{ github.sha }}
           restore-keys: |
             ccache-${{ runner.os }}-test-

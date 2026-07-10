@@ -17,6 +17,8 @@ jobs:
   build:
     name: Build ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
     strategy:
       matrix:
         include:
@@ -38,7 +40,7 @@ jobs:
       - name: Cache ccache
         uses: actions/cache@v6
         with:
-          path: ~/.ccache
+          path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ runner.os }}-${{ matrix.arch }}-${{ github.sha }}
           restore-keys: |
             ccache-${{ runner.os }}-${{ matrix.arch }}-
