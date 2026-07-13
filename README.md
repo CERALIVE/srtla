@@ -269,6 +269,15 @@ tests/compat/run-matrix.sh --tier blocking
 tests/compat/run-matrix.sh --pair oursxours --duration 20
 ```
 
+The compatibility helper, pcap replay, and scheduled drift builds use ccache
+with source- and compiler-scoped keys. Every ccache archive is configured and
+cleaned to a 200 MB maximum; the nine active key domains therefore consume at
+most 1.8 GB per source generation. Pinned external-image keys hash the matrix
+generator, registry, every current image build context, and the composite build
+action; the TypeScript bindings cache remains lockfile-scoped. The hosted
+inventory and old-key cleanup procedure is documented in AGENTS.md under
+"CI Validation and Build Cache."
+
 Per-pair verdicts land in `tests/compat/results/<pair>/result.json` (gitignored). See [Compatibility](docs/COMPATIBILITY.md) for the ecosystem research behind each entry.
 
 ## Telemetry

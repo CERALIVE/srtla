@@ -19,6 +19,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
     strategy:
       matrix:
         include:
@@ -41,9 +42,12 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ matrix.arch }}-${{ github.sha }}
+          key: ccache-${{ runner.os }}-${{ matrix.arch }}-gcc-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-${{ matrix.arch }}-
+            ccache-${{ runner.os }}-${{ matrix.arch }}-gcc-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
 
       - name: Build srtla
         run: |
@@ -69,3 +73,10 @@ jobs:
             echo "**Architecture:** ${{ matrix.arch }}"
             echo "**Runner:** ${{ matrix.runner }}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi

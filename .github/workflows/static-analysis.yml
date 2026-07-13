@@ -49,6 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
 
     steps:
       - name: Checkout code
@@ -69,9 +70,12 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-test-${{ github.sha }}
+          key: ccache-${{ runner.os }}-amd64-gcc-test-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-test-
+            ccache-${{ runner.os }}-amd64-gcc-test-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
       
       - name: Configure CMake
         run: |
@@ -85,3 +89,10 @@ jobs:
       - name: Run tests
         run: |
           cd build && ctest --output-on-failure
+
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi

@@ -77,6 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -93,9 +94,12 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-release-validation-${{ github.sha }}
+          key: ccache-${{ runner.os }}-amd64-gcc-release-validation-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-release-validation-
+            ccache-${{ runner.os }}-amd64-gcc-release-validation-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
 
       - name: Check workflow contracts
         run: |
@@ -116,12 +120,20 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi
+
   build-deb:
     name: Build Debian Package (${{ matrix.arch }})
     needs: calculate-version
     runs-on: ${{ matrix.runner }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
     strategy:
       matrix:
         include:
@@ -142,9 +154,12 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ matrix.arch }}-${{ github.sha }}
+          key: ccache-${{ runner.os }}-${{ matrix.arch }}-gcc-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-${{ matrix.arch }}-
+            ccache-${{ runner.os }}-${{ matrix.arch }}-gcc-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
 
       - name: Build srtla
         run: |
@@ -190,6 +205,13 @@ jobs:
           sha256sum "srtla_${VERSION}_${ARCH}.deb" > "srtla_${VERSION}_${ARCH}.deb.sha256"
           sha256sum "srtla_${VERSION}_${ARCH}.tar.gz" > "srtla_${VERSION}_${ARCH}.tar.gz.sha256"
 
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
@@ -207,6 +229,7 @@ jobs:
     container: ubuntu:20.04
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
     steps:
       - name: Install Focal build dependencies
         env:
@@ -225,9 +248,12 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-focal-amd64-${{ github.sha }}
+          key: ccache-${{ runner.os }}-focal-amd64-gcc-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-focal-amd64-
+            ccache-${{ runner.os }}-focal-amd64-gcc-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
 
       - name: Configure Focal package build
         run: |
@@ -275,6 +301,13 @@ jobs:
             > "srtla_${VERSION}_amd64.deb.sha256"
           sha256sum "srtla_${VERSION}_amd64.tar.gz" \
             > "srtla_${VERSION}_amd64.tar.gz.sha256"
+
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi
 
       - name: Upload Focal artifact
         uses: actions/upload-artifact@v7

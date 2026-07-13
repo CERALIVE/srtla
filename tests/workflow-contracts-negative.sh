@@ -13,10 +13,13 @@ run_negative_case() {
   local output
   local rc
 
-  cp "$REPO_ROOT/.github/workflows/publish-release.yml" \
-    "$FIXTURE_ROOT/.github/workflows/publish-release.yml"
-  cp "$REPO_ROOT/.github/workflows/static-analysis.yml" \
-    "$FIXTURE_ROOT/.github/workflows/static-analysis.yml"
+  cp -a "$REPO_ROOT/.github/workflows/." "$FIXTURE_ROOT/.github/workflows/"
+  mkdir -p "$FIXTURE_ROOT/.github/actions/compat-build"
+  cp "$REPO_ROOT/.github/actions/compat-build/action.yml" \
+    "$FIXTURE_ROOT/.github/actions/compat-build/action.yml"
+  mkdir -p "$FIXTURE_ROOT/tests/compat"
+  cp "$REPO_ROOT/tests/compat/matrix.yaml" \
+    "$FIXTURE_ROOT/tests/compat/matrix.yaml"
 
   python3 - "$FIXTURE_ROOT/.github/workflows/publish-release.yml" "$mutation" <<'PY'
 from pathlib import Path
@@ -38,6 +41,18 @@ elif mutation == "remove-validation-build":
         step for step in jobs["validate"]["steps"] if step.get("name") == "Build"
     )
     build_step["run"] = "echo validation build skipped"
+elif mutation == "remove-release-cache":
+    jobs["build-deb"]["steps"] = [
+        step
+        for step in jobs["build-deb"]["steps"]
+        if step.get("name") != "Cache ccache"
+    ]
+elif mutation == "remove-focal-cache":
+    jobs["build-deb-focal"]["steps"] = [
+        step
+        for step in jobs["build-deb-focal"]["steps"]
+        if step.get("name") != "Cache ccache"
+    ]
 elif mutation == "remove-focal-job":
     del jobs["build-deb-focal"]
 elif mutation == "disable-focal-tests":
@@ -168,6 +183,116 @@ PY
   printf 'workflow-contracts-negative: rejected %s\n' "$mutation"
 }
 
+run_compat_negative_case() {
+  local mutation=$1
+  local expected_error=$2
+  local output
+  local rc
+
+  cp -a "$REPO_ROOT/.github/workflows/." "$FIXTURE_ROOT/.github/workflows/"
+  mkdir -p "$FIXTURE_ROOT/.github/actions/compat-build"
+  cp "$REPO_ROOT/.github/actions/compat-build/action.yml" \
+    "$FIXTURE_ROOT/.github/actions/compat-build/action.yml"
+  mkdir -p "$FIXTURE_ROOT/tests/compat"
+  cp "$REPO_ROOT/tests/compat/matrix.yaml" \
+    "$FIXTURE_ROOT/tests/compat/matrix.yaml"
+
+  python3 - \
+    "$FIXTURE_ROOT/.github/workflows/compat-matrix.yml" \
+    "$FIXTURE_ROOT/.github/actions/compat-build/action.yml" \
+    "$mutation" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+
+path = Path(sys.argv[1])
+action_path = Path(sys.argv[2])
+mutation = sys.argv[3]
+with path.open(encoding="utf-8") as handle:
+    workflow = yaml.safe_load(handle)
+
+jobs = workflow["jobs"]
+if mutation == "remove-compat-cache":
+    jobs["compat-blocking"]["steps"] = [
+        step
+        for step in jobs["compat-blocking"]["steps"]
+        if step.get("name") != "Cache ccache"
+    ]
+elif mutation == "remove-pcap-cache":
+    jobs["pcap-replay"]["steps"] = [
+        step
+        for step in jobs["pcap-replay"]["steps"]
+        if step.get("name") != "Cache ccache"
+    ]
+elif mutation == "downgrade-cache-major":
+    cache_step = next(
+        step
+        for step in jobs["compat-blocking"]["steps"]
+        if step.get("name") == "Cache ccache"
+    )
+    cache_step["uses"] = "actions/cache@v5"
+elif mutation.startswith("remove-image-input:"):
+    omitted = mutation.split(":", 1)[1]
+    cache_step = next(
+        step
+        for step in jobs["compat-blocking"]["steps"]
+        if step.get("name") == "Restore external image cache"
+    )
+    key = cache_step["with"]["key"]
+    for token in (f"'{omitted}', ", f", '{omitted}'", f"'{omitted}'"):
+        key = key.replace(token, "")
+    cache_step["with"]["key"] = key
+elif mutation == "inflate-ccache-maxsize":
+    jobs["compat-blocking"]["env"]["CCACHE_MAXSIZE"] = "2G"
+elif mutation == "remove-pcap-eviction":
+    jobs["pcap-replay"]["steps"] = [
+        step
+        for step in jobs["pcap-replay"]["steps"]
+        if step.get("name") != "Enforce ccache bound"
+    ]
+elif mutation == "comment-launcher-decoy":
+    with action_path.open(encoding="utf-8") as handle:
+        action = yaml.safe_load(handle)
+    build_step = next(
+        step
+        for step in action["runs"]["steps"]
+        if step.get("name") == "Build srtla + compat helpers"
+    )
+    build_step["run"] = "\n".join(
+        line
+        for line in build_step["run"].splitlines()
+        if "COMPILER_LAUNCHER=ccache" not in line
+    )
+    with action_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(action, handle, sort_keys=False)
+        handle.write("# -DCMAKE_C_COMPILER_LAUNCHER=ccache\n")
+        handle.write("# -DCMAKE_CXX_COMPILER_LAUNCHER=ccache\n")
+else:
+    raise SystemExit(f"unknown mutation: {mutation}")
+
+with path.open("w", encoding="utf-8") as handle:
+    yaml.safe_dump(workflow, handle, sort_keys=False)
+PY
+
+  set +e
+  output=$("$REPO_ROOT/tests/workflow-contracts.sh" "$FIXTURE_ROOT" 2>&1)
+  rc=$?
+  set -e
+
+  if [[ $rc -eq 0 ]]; then
+    printf 'ERROR: mutation %s was not rejected\n' "$mutation" >&2
+    return 1
+  fi
+  if [[ $output != *"$expected_error"* ]]; then
+    printf 'ERROR: mutation %s failed without expected error: %s\n%s\n' \
+      "$mutation" "$expected_error" "$output" >&2
+    return 1
+  fi
+  printf 'workflow-contracts-negative: rejected %s\n' "$mutation"
+}
+
 failures=0
 run_negative_case \
   remove-build-deb-need \
@@ -175,6 +300,12 @@ run_negative_case \
 run_negative_case \
   remove-validation-build \
   "publish-release: validate job does not run the normal CMake build" || failures=$((failures + 1))
+run_negative_case \
+  remove-release-cache \
+  "publish-release: build-deb must cache ccache" || failures=$((failures + 1))
+run_negative_case \
+  remove-focal-cache \
+  "publish-release: build-deb-focal must cache ccache" || failures=$((failures + 1))
 run_negative_case \
   remove-focal-job \
   "publish-release: required build-deb-focal job is missing" || failures=$((failures + 1))
@@ -223,5 +354,38 @@ run_negative_case \
 run_negative_case \
   bypass-release-gates \
   "publish-release: publish job may not bypass failed dependencies" || failures=$((failures + 1))
+run_compat_negative_case \
+  remove-compat-cache \
+  "compat-matrix: compat-blocking must cache ccache" || failures=$((failures + 1))
+run_compat_negative_case \
+  remove-pcap-cache \
+  "compat-matrix: pcap-replay must cache ccache" || failures=$((failures + 1))
+run_compat_negative_case \
+  downgrade-cache-major \
+  "compat-matrix: compat-blocking cache action must use actions/cache@v6" || failures=$((failures + 1))
+run_compat_negative_case \
+  comment-launcher-decoy \
+  "compat-build: composite action does not configure -DCMAKE_C_COMPILER_LAUNCHER=ccache" || failures=$((failures + 1))
+run_compat_negative_case \
+  "remove-image-input:tests/compat/matrix.yaml" \
+  "compat-matrix: compat-blocking external-image key omits tests/compat/matrix.yaml" || failures=$((failures + 1))
+run_compat_negative_case \
+  "remove-image-input:tests/compat/gen-ci-matrix.sh" \
+  "compat-matrix: compat-blocking external-image key omits tests/compat/gen-ci-matrix.sh" || failures=$((failures + 1))
+run_compat_negative_case \
+  "remove-image-input:tests/compat/docker/**" \
+  "compat-matrix: compat-blocking external-image key omits tests/compat/docker/**" || failures=$((failures + 1))
+run_compat_negative_case \
+  "remove-image-input:tests/compat/moblin-mock/**" \
+  "compat-matrix: compat-blocking external-image key omits tests/compat/moblin-mock/**" || failures=$((failures + 1))
+run_compat_negative_case \
+  "remove-image-input:.github/actions/compat-build/**" \
+  "compat-matrix: compat-blocking external-image key omits .github/actions/compat-build/**" || failures=$((failures + 1))
+run_compat_negative_case \
+  inflate-ccache-maxsize \
+  "compat-matrix: compat-blocking must set CCACHE_MAXSIZE to 200M" || failures=$((failures + 1))
+run_compat_negative_case \
+  remove-pcap-eviction \
+  "compat-matrix: pcap-replay does not enforce ccache eviction" || failures=$((failures + 1))
 
 exit "$failures"
