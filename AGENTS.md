@@ -8,7 +8,7 @@ Bonds multiple uplinks (LTE, WiFi) into a single SRT stream. Builds `srtla_send`
 
 Consumers:
 - **CeraUI backend** — TS bindings via `link:../../../srtla/bindings/typescript` (`@ceralive/srtla`)
-- **Device image** — `srtla` .deb (built by `image-building-pipeline`); **receiver-only** as of the cutover release — ships `srtla_rec` only
+- **Server-side receiver deployments** — receiver-only GitHub Release `.deb`/archive assets ship `srtla_rec` only
 - **obs-srtla-sender-plugin** — retired 2026-06-11 (was a runtime dep only, never in the device image; repo retained on GitHub)
 
 ## C SENDER DEPRECATED — RECEIVER-ONLY .deb (ADR-003)
@@ -19,7 +19,7 @@ What this means in-tree:
 - **Source and tests stay.** `src/sender.cpp` / `src/sender.h` / `src/sender_logic.h` and every GTest suite (incl. `test_sender_bootstrap.cpp`) remain in the repo and **still build and run** — `srtla_send` is a normal build target, exercised by `ctest` (19 suites). Only the **install/package payload** drops it (`install(TARGETS srtla_rec ...)` in `CMakeLists.txt`; the `srtla-send.service` systemd unit is no longer in the `publish-release.yml` FPM payload).
 - **Do NOT delete the C sender source or its tests** (Rule E). It is the protocol reference and keeps the compat harness' C-sender pairs runnable.
 - **TS bindings are unchanged.** `bindings/typescript` still ships `srtla_send` *and* `srtla_rec` helpers (`@ceralive/srtla`); the sender helpers now target the `srtla-send-rs` binary, which is CLI- and telemetry-compatible (ADR-003 parity layer).
-- Device-image packaging: `srtla` provides `srtla_rec`; `srtla-send-rs` provides `srtla_send`. The fork's `.deb` declares `Conflicts/Replaces: srtla (<< <cutover-version>)`; that bound must be set to this receiver-only srtla release's version so the two packages coexist (sender from the fork, receiver from `srtla`).
+- Distribution: this repo publishes `srtla_rec` only through GitHub Releases. It is not a device-image package. `srtla-send-rs` independently provides the device-side `srtla_send` package.
 
 ## OVERVIEW
 
@@ -81,6 +81,67 @@ cmake -B build && cmake --build build
 # TS bindings
 cd bindings/typescript && bun install && bun run build
 ```
+
+## CI VALIDATION AND BUILD CACHE
+
+The compiling C++ lanes in `build-check.yml`, `static-analysis.yml`,
+`compat-matrix.yml`, and `publish-release.yml` install and use `ccache`. Each
+sets `CCACHE_DIR` to `${{ github.workspace }}/.ccache` and caches that exact
+path; this avoids relying on ccache's version-dependent default cache directory.
+The compatibility composite action also configures both C and C++ compiler
+launchers, while its callers own the cache step. Cache keys include runner
+OS, architecture or lane, compiler, and source revision, and restore from
+their matching prefix, so unchanged translation units can be reused without
+treating a prior build as a final artifact. The TypeScript bindings cache is
+keyed by runner OS and `bindings/typescript/bun.lock`; external compatibility
+images are keyed by runner OS and amd64 plus every current image-selection and
+build input: `matrix.yaml`, `gen-ci-matrix.sh`, all Docker and Moblin-mock build
+contexts, and `.github/actions/compat-build/**`.
+
+Every compiling job also sets `CCACHE_MAXSIZE=200M`, runs
+`ccache -M "$CCACHE_MAXSIZE"` after restore, and runs `ccache -c` under
+`if: always()` before the cache post-action. The cleanup command evicts local
+entries back to the configured 200 MB maximum even after a failed build. The
+workflow contract expands matrix architectures and caps the current topology at
+nine compatible key domains, so one active source generation is bounded to
+`9 × 200 MB = 1800 MB`, well below the repository's 10 GB Actions-cache limit.
+Older immutable source-revision keys can still accumulate, so inspect hosted
+inventory before and after cache-topology changes and at least monthly:
+
+```bash
+gh api --paginate --slurp \
+  'repos/CERALIVE/srtla/actions/caches?per_page=100' |
+  jq '[.[].actions_caches[]] as $c |
+      {entries: ($c | length),
+       total_bytes: ($c | map(.size_in_bytes) | add // 0),
+       ccache_bytes: ($c | map(select(.key | startswith("ccache-")) |
+                              .size_in_bytes) | add // 0),
+       caches: ($c | map({id, key, ref, size_in_bytes, last_accessed_at}))}'
+```
+
+Keep ccache entries below 6 GiB and all repository caches below 8 GiB, preserving
+at least 2 GiB of headroom. If either threshold is reached, delete the oldest
+superseded ccache IDs shown by the inventory with
+`gh cache delete <id> --repo CERALIVE/srtla`; never delete a current key without
+first confirming a successful replacement run. Inventory is read-only; deletion
+is an explicit maintainer operation and is not performed by CI.
+
+The `static-analysis.yml` `clang-tidy` lane is intentionally uncached: its `lint`
+target invokes `clang-tidy` directly and does not compile through a CMake compiler
+launcher. The release workflow instead runs a required `validate` job with the
+full CMake build, direct clang-tidy target, and CTest suite. The native Debian
+package lane builds ARM64, while an independent Ubuntu 20.04 container lane
+builds and tests the sole AMD64 package. `publish` waits for validation and both
+package jobs, then creates one GitHub Release containing both package assets and
+their archives/checksums. GitHub Releases are the sole publication path: `srtla`
+is receiver-only, is absent from the device-image `REPOS`, and has no supported
+centralized APT repository component.
+`tests/workflow-contracts.sh` locks the dependency, validation-command, cache,
+artifact-name, and payload contracts; `tests/workflow-contracts-negative.sh`
+mutates each critical release invariant and proves the validator rejects it,
+including cache-major downgrades, command-comment decoys, stale image-key input
+omissions, and removal or inflation of the ccache bound.
+Both run in PR static analysis and release validation.
 
 ## COMPAT HARNESS
 

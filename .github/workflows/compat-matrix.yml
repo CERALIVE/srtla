@@ -106,6 +106,9 @@ jobs:
     needs: generate-matrix
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.generate-matrix.outputs.blocking) }}
@@ -115,11 +118,19 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-compat-blocking-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-compat-blocking-
+
       - name: Restore external image cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /tmp/compat-images
-          key: compat-images-blocking-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/docker/**') }}
+          key: compat-images-${{ runner.os }}-amd64-blocking-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/gen-ci-matrix.sh', 'tests/compat/docker/**', 'tests/compat/moblin-mock/**', '.github/actions/compat-build/**') }}
 
       - name: Build helpers and external images
         uses: ./.github/actions/compat-build
@@ -172,6 +183,9 @@ jobs:
     needs: generate-matrix
     if: github.event_name != 'schedule' && needs.generate-matrix.outputs.has_informational == 'true'
     runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.generate-matrix.outputs.informational) }}
@@ -181,11 +195,19 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-compat-informational-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-compat-informational-
+
       - name: Restore external image cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /tmp/compat-images
-          key: compat-images-informational-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/docker/**') }}
+          key: compat-images-${{ runner.os }}-amd64-informational-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/gen-ci-matrix.sh', 'tests/compat/docker/**', 'tests/compat/moblin-mock/**', '.github/actions/compat-build/**') }}
 
       - name: Build helpers and external images
         uses: ./.github/actions/compat-build
@@ -242,12 +264,31 @@ jobs:
     needs: generate-matrix
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           submodules: recursive
           lfs: true
+
+      - name: Install ccache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-compat-pcap-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-compat-pcap-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
 
       - name: Replay pcap fixtures (skip if absent)
         run: |
@@ -264,7 +305,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake git pkg-config libspdlog-dev
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build -j"$(nproc)" --target srtla_rec
 
           set +e
@@ -278,6 +320,13 @@ jobs:
           fi
           exit "$rc"
 
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi
+
   # --------------------------------------------------------------------- #
   # Weekly upstream drift — informational tier against upstream HEADs.     #
   # Pure detection: never blocks.                                          #
@@ -288,11 +337,22 @@ jobs:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     continue-on-error: true
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-compat-drift-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-compat-drift-
 
       - name: Build helpers and external images at upstream HEAD
         uses: ./.github/actions/compat-build

@@ -26,13 +26,18 @@ runs:
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
           build-essential cmake git pkg-config \
-          libspdlog-dev libsrt-openssl-dev \
+          ccache libspdlog-dev libsrt-openssl-dev \
           ffmpeg jq python3-yaml
+
+    - name: Configure bounded ccache
+      shell: bash
+      run: ccache -M "$CCACHE_MAXSIZE"
 
     - name: Build srtla + compat helpers
       shell: bash
       run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_COMPAT_TESTS=ON
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_COMPAT_TESTS=ON \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
         cmake --build build -j"$(nproc)"
         test -x build/srtla_send
         test -x build/srtla_rec
@@ -93,3 +98,11 @@ runs:
           fi
           echo "::endgroup::"
         done
+
+    - name: Enforce ccache bound
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        if command -v ccache >/dev/null 2>&1; then
+          ccache -c
+        fi
