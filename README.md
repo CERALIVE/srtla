@@ -271,12 +271,20 @@ tests/compat/run-matrix.sh --pair oursxours --duration 20
 
 The compatibility helper, pcap replay, and scheduled drift builds use ccache
 with source- and compiler-scoped keys. Every ccache archive is configured and
-cleaned to a 200 MB maximum; the nine active key domains therefore consume at
-most 1.8 GB per source generation. Pinned external-image keys hash the matrix
+cleaned to a 200 MB maximum; the ten active key domains therefore consume at
+most 2.0 GB per source generation. Pinned external-image keys hash the matrix
 generator, registry, every current image build context, and the composite build
 action; the TypeScript bindings cache remains lockfile-scoped. The hosted
 inventory and old-key cleanup procedure is documented in AGENTS.md under
 "CI Validation and Build Cache."
+
+The `Hosted privileged jitter (SRT 1.5.6)` compatibility job can be repeated
+with `workflow_dispatch`. A pull-request head runs only when a maintainer applies
+the `privileged-ci-approved` label to that exact revision. It uses immutable
+`irl-srt-server`, CERALIVE SRT, and production `srtla-send-rs` source pins,
+verifies the pin relationship, exercises the pinned server runtime, runs the
+real three-phase netem scenario under `sudo -n`, rejects skips and zero-byte
+results, and always uploads the full result/log/provenance bundle.
 
 Per-pair verdicts land in `tests/compat/results/<pair>/result.json` (gitignored). See [Compatibility](docs/COMPATIBILITY.md) for the ecosystem research behind each entry.
 

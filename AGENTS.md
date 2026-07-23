@@ -103,8 +103,8 @@ Every compiling job also sets `CCACHE_MAXSIZE=200M`, runs
 `if: always()` before the cache post-action. The cleanup command evicts local
 entries back to the configured 200 MB maximum even after a failed build. The
 workflow contract expands matrix architectures and caps the current topology at
-nine compatible key domains, so one active source generation is bounded to
-`9 × 200 MB = 1800 MB`, well below the repository's 10 GB Actions-cache limit.
+ten compatible key domains, so one active source generation is bounded to
+`10 × 200 MB = 2000 MB`, well below the repository's 10 GB Actions-cache limit.
 Older immutable source-revision keys can still accumulate, so inspect hosted
 inventory before and after cache-topology changes and at least monthly:
 
@@ -292,6 +292,24 @@ Compat scenarios under `tests/compat/scenarios/` (run by the harness):
 | `sighup-reload.sh` | New IP joins group on SIGHUP with 0 disconnects; garbage file refused |
 | `jitter-stress.sh` | Two links under 3 escalating live netem jitter phases (no loss) keep streaming with 0 reaps, both links registered, disconnects==0 (needs netem/CAP_NET_ADMIN) |
 
+`compat-matrix.yml` includes a hosted privileged jitter lane on
+`workflow_dispatch`. A pull-request head runs only on the exact
+`privileged-ci-approved` label event; a later push requires the label to be
+removed and applied again, so privileged execution follows maintainer review of
+that SHA. The lane checks out `irl-srt-server` at
+`02fd73e3ef7795c1c631350adb8a873af67f1c4a`, verifies that source pins
+CERALIVE SRT `b06fdb6b85937f3f5cf5452b150a6bb7e35b0226` (1.5.6), builds
+its real `srt_server` against that exact library, verifies all three receive
+profiles bind, and requires a clean shutdown. It also builds `srt-sink` against
+the same library and the production Rust sender from
+`srtla-send-rs` `2a4ecd4a7d6e84cbcec56b09eecbf721838dc4d8`, proves netem capability with
+passwordless `sudo -n`, and runs the real three-phase `jitter-stress.sh`.
+Exit 77, a missing result, `.skipped:true`, zero bytes, link reaps, fewer than
+two active links, or any false criterion fails the job. The always-uploaded
+`hosted-jitter-<srtla-sha>` artifact contains source/library provenance,
+capability output, the invocation transcript, and all scenario results/logs.
+No container privilege, deployment, publication, or external mutation occurs.
+
 The scenarios are **sender-agnostic**: their behavioral greps match both the C
 `srtla_send` and the Rust fork (different log wording — e.g. C "Added connection
 via IP" vs fork "added uplink … via IP"; C "connection failed" vs fork "timed out;
@@ -299,6 +317,14 @@ attempting full socket reconnection"). The Rust fork is silent unless `RUST_LOG`
 set, so the sender launch in each scenario prefixes `RUST_LOG="${RUST_LOG:-info}"`
 (a no-op for the C sender, which logs unconditionally). Run a scenario against the
 fork by pointing `--build-dir` at a dir whose `srtla_send` is the fork binary.
+`jitter-stress.sh` waits for telemetry to report an established upstream link
+before starting ffmpeg; a fixed startup sleep is not a valid readiness signal.
+The unchanged per-phase gates still require both bonded links.
+`SRTLA_SEND_RS_BIN` selects the production sender; `REQUIRE_RS_SENDER=1`
+turns a missing binary into exit-77 SKIP, which the hosted lane rejects.
+The two source addresses are `.1` and `.4` in one `/29`, targeting receiver
+`.2`. `.4` deliberately sits outside the helper's original `.0/30`; `.3` is
+that `/30`'s broadcast address and must not be used as the second source.
 
 ## TELEMETRY
 
