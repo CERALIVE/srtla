@@ -20,6 +20,9 @@ run_negative_case() {
   mkdir -p "$FIXTURE_ROOT/tests/compat"
   cp "$REPO_ROOT/tests/compat/matrix.yaml" \
     "$FIXTURE_ROOT/tests/compat/matrix.yaml"
+  mkdir -p "$FIXTURE_ROOT/tests/compat/scenarios"
+  cp "$REPO_ROOT/tests/compat/scenarios/jitter-stress.sh" \
+    "$FIXTURE_ROOT/tests/compat/scenarios/jitter-stress.sh"
 
   python3 - "$FIXTURE_ROOT/.github/workflows/publish-release.yml" "$mutation" <<'PY'
 from pathlib import Path
@@ -196,10 +199,14 @@ run_compat_negative_case() {
   mkdir -p "$FIXTURE_ROOT/tests/compat"
   cp "$REPO_ROOT/tests/compat/matrix.yaml" \
     "$FIXTURE_ROOT/tests/compat/matrix.yaml"
+  mkdir -p "$FIXTURE_ROOT/tests/compat/scenarios"
+  cp "$REPO_ROOT/tests/compat/scenarios/jitter-stress.sh" \
+    "$FIXTURE_ROOT/tests/compat/scenarios/jitter-stress.sh"
 
   python3 - \
     "$FIXTURE_ROOT/.github/workflows/compat-matrix.yml" \
     "$FIXTURE_ROOT/.github/actions/compat-build/action.yml" \
+    "$FIXTURE_ROOT/tests/compat/scenarios/jitter-stress.sh" \
     "$mutation" <<'PY'
 from pathlib import Path
 import sys
@@ -209,7 +216,8 @@ import yaml
 
 path = Path(sys.argv[1])
 action_path = Path(sys.argv[2])
-mutation = sys.argv[3]
+jitter_path = Path(sys.argv[3])
+mutation = sys.argv[4]
 with path.open(encoding="utf-8") as handle:
     workflow = yaml.safe_load(handle)
 
@@ -252,6 +260,72 @@ elif mutation == "remove-pcap-eviction":
         for step in jobs["pcap-replay"]["steps"]
         if step.get("name") != "Enforce ccache bound"
     ]
+elif mutation == "remove-workflow-dispatch":
+    triggers = workflow.get("on", workflow.get(True))
+    del triggers["workflow_dispatch"]
+elif mutation == "change-hosted-srt-pin":
+    jobs["hosted-jitter"]["env"]["SRT_SHA"] = "0" * 40
+elif mutation == "change-hosted-irl-pin":
+    jobs["hosted-jitter"]["env"]["IRL_SRT_SERVER_SHA"] = "0" * 40
+elif mutation == "change-hosted-rust-sender-pin":
+    jobs["hosted-jitter"]["env"]["SRTLA_SEND_RS_SHA"] = "0" * 40
+elif mutation == "remove-hosted-jitter-approval":
+    jobs["hosted-jitter"]["if"] = "${{ github.event_name == 'pull_request' }}"
+elif mutation == "remove-hosted-head-ref":
+    checkout_step = next(
+        step
+        for step in jobs["hosted-jitter"]["steps"]
+        if step.get("name") == "Checkout srtla"
+    )
+    del checkout_step["with"]["ref"]
+elif mutation == "misreport-hosted-source-sha":
+    jobs["hosted-jitter"]["env"]["SRTLA_SOURCE_SHA"] = "${{ github.sha }}"
+elif mutation == "record-hosted-event-sha":
+    provenance_step = next(
+        step
+        for step in jobs["hosted-jitter"]["steps"]
+        if step.get("name") == "Record source and runtime provenance"
+    )
+    provenance_step["run"] = provenance_step["run"].replace(
+        '--arg srtla_sha "$resolved_srtla_sha"',
+        '--arg srtla_sha "$GITHUB_SHA"',
+    )
+elif mutation == "remove-hosted-irl-runtime":
+    jobs["hosted-jitter"]["steps"] = [
+        step
+        for step in jobs["hosted-jitter"]["steps"]
+        if step.get("name") != "Build and exercise pinned irl-srt-server runtime"
+    ]
+elif mutation == "allow-hosted-jitter-skip":
+    verify_step = next(
+        step
+        for step in jobs["hosted-jitter"]["steps"]
+        if step.get("name") == "Run and verify real jitter stress"
+    )
+    verify_step["run"] = verify_step["run"].replace(
+        ".skipped != true", ".skipped == true"
+    )
+elif mutation == "remove-hosted-jitter-evidence":
+    jobs["hosted-jitter"]["steps"] = [
+        step
+        for step in jobs["hosted-jitter"]["steps"]
+        if step.get("name") != "Upload hosted jitter evidence"
+    ]
+elif mutation == "remove-hosted-jitter-readiness":
+    jitter_path.write_text(
+        jitter_path.read_text(encoding="utf-8").replace(
+            "wait_for_connection_count 1 10", "sleep 0.6"
+        ),
+        encoding="utf-8",
+    )
+elif mutation == "break-hosted-jitter-source-symmetry":
+    jitter_path.write_text(
+        jitter_path.read_text(encoding="utf-8").replace(
+            'LINK2_SRC="10.173.${OCTET}.4"',
+            'LINK2_SRC="10.174.${OCTET}.1"\nLINK2_PEER="10.174.${OCTET}.2"',
+        ),
+        encoding="utf-8",
+    )
 elif mutation == "comment-launcher-decoy":
     with action_path.open(encoding="utf-8") as handle:
         action = yaml.safe_load(handle)
@@ -387,5 +461,44 @@ run_compat_negative_case \
 run_compat_negative_case \
   remove-pcap-eviction \
   "compat-matrix: pcap-replay does not enforce ccache eviction" || failures=$((failures + 1))
+run_compat_negative_case \
+  remove-workflow-dispatch \
+  "compat-matrix: hosted jitter lane must be workflow_dispatch enabled" || failures=$((failures + 1))
+run_compat_negative_case \
+  change-hosted-srt-pin \
+  "compat-matrix: hosted-jitter SRT 1.5.6 pin is not immutable" || failures=$((failures + 1))
+run_compat_negative_case \
+  change-hosted-irl-pin \
+  "compat-matrix: hosted-jitter irl-srt-server pin is not immutable" || failures=$((failures + 1))
+run_compat_negative_case \
+  change-hosted-rust-sender-pin \
+  "compat-matrix: hosted-jitter Rust sender pin is not immutable" || failures=$((failures + 1))
+run_compat_negative_case \
+  remove-hosted-jitter-approval \
+  "compat-matrix: hosted-jitter PR execution lacks exact-head maintainer approval" || failures=$((failures + 1))
+run_compat_negative_case \
+  remove-hosted-head-ref \
+  "compat-matrix: hosted-jitter does not checkout the approved PR head SHA" || failures=$((failures + 1))
+run_compat_negative_case \
+  misreport-hosted-source-sha \
+  "compat-matrix: hosted-jitter provenance is not bound to the approved PR head SHA" || failures=$((failures + 1))
+run_compat_negative_case \
+  record-hosted-event-sha \
+  "compat-matrix: hosted-jitter records event SHA instead of checked-out source SHA" || failures=$((failures + 1))
+run_compat_negative_case \
+  remove-hosted-irl-runtime \
+  "compat-matrix: hosted-jitter does not exercise the pinned irl-srt-server runtime" || failures=$((failures + 1))
+run_compat_negative_case \
+  allow-hosted-jitter-skip \
+  "compat-matrix: hosted-jitter can accept a skip or misleading PASS" || failures=$((failures + 1))
+run_compat_negative_case \
+  remove-hosted-jitter-evidence \
+  "compat-matrix: hosted-jitter must always upload non-empty evidence" || failures=$((failures + 1))
+run_compat_negative_case \
+  remove-hosted-jitter-readiness \
+  "jitter-stress: media caller starts before an upstream link is ready" || failures=$((failures + 1))
+run_compat_negative_case \
+  break-hosted-jitter-source-symmetry \
+  "jitter-stress: second link does not preserve the receiver source address" || failures=$((failures + 1))
 
 exit "$failures"

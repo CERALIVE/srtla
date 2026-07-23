@@ -15,7 +15,7 @@ import yaml
 
 repo_root = Path(sys.argv[1])
 CCACHE_MAXSIZE = "200M"
-CCACHE_ACTIVE_BUDGET_MB = 1800
+CCACHE_ACTIVE_BUDGET_MB = 2000
 COMPAT_IMAGE_CACHE_INPUTS = {
     ".github/actions/compat-build/**",
     "tests/compat/docker/**",
@@ -455,6 +455,131 @@ if "bun install --frozen-lockfile" not in job_text(bindings_job):
 
 compat = load_workflow("compat-matrix.yml")
 compat_jobs = compat.get("jobs", {})
+compat_triggers = compat.get("on", compat.get(True, {}))
+if not isinstance(compat_triggers, dict) or "workflow_dispatch" not in compat_triggers:
+    errors.append("compat-matrix: hosted jitter lane must be workflow_dispatch enabled")
+
+hosted_jitter = compat_jobs.get("hosted-jitter")
+if not isinstance(hosted_jitter, dict):
+    errors.append("compat-matrix: hosted-jitter job is missing")
+else:
+    hosted_env = hosted_jitter.get("env", {})
+    if hosted_env.get("IRL_SRT_SERVER_SHA") != (
+        "02fd73e3ef7795c1c631350adb8a873af67f1c4a"
+    ):
+        errors.append("compat-matrix: hosted-jitter irl-srt-server pin is not immutable")
+    if hosted_env.get("SRT_SHA") != (
+        "b06fdb6b85937f3f5cf5452b150a6bb7e35b0226"
+    ):
+        errors.append("compat-matrix: hosted-jitter SRT 1.5.6 pin is not immutable")
+    if hosted_env.get("SRTLA_SEND_RS_SHA") != (
+        "2a4ecd4a7d6e84cbcec56b09eecbf721838dc4d8"
+    ):
+        errors.append("compat-matrix: hosted-jitter Rust sender pin is not immutable")
+    hosted_if = str(hosted_jitter.get("if", ""))
+    if (
+        "github.event_name == 'workflow_dispatch'" not in hosted_if
+        or "github.event.action == 'labeled'" not in hosted_if
+        or "github.event.label.name == 'privileged-ci-approved'" not in hosted_if
+    ):
+        errors.append(
+            "compat-matrix: hosted-jitter PR execution lacks exact-head maintainer approval"
+        )
+    hosted_checkout = next(
+        (
+            step
+            for step in hosted_jitter.get("steps", [])
+            if isinstance(step, dict) and step.get("name") == "Checkout srtla"
+        ),
+        {},
+    )
+    if hosted_checkout.get("with", {}).get("ref") != (
+        "${{ github.event.pull_request.head.sha || github.sha }}"
+    ):
+        errors.append(
+            "compat-matrix: hosted-jitter does not checkout the approved PR head SHA"
+        )
+    if hosted_env.get("SRTLA_SOURCE_SHA") != (
+        "${{ github.event.pull_request.head.sha || github.sha }}"
+    ):
+        errors.append(
+            "compat-matrix: hosted-jitter provenance is not bound to the approved PR head SHA"
+        )
+    hosted_commands = executable_run_text(hosted_jitter)
+    if (
+        'resolved_srtla_sha="$(git rev-parse HEAD)"' not in hosted_commands
+        or 'test "$resolved_srtla_sha" = "$SRTLA_SOURCE_SHA"' not in hosted_commands
+        or '--arg srtla_sha "$resolved_srtla_sha"' not in hosted_commands
+    ):
+        errors.append(
+            "compat-matrix: hosted-jitter records event SHA instead of checked-out source SHA"
+        )
+    if (
+        "build-hosted-irl/bin/srt_server" not in hosted_commands
+        or 'grep -q "SRT profile: L3-direct"' not in hosted_commands
+        or 'wait "$irl_pid"' not in hosted_commands
+        or "irl-srt-server-ldd.txt" not in hosted_commands
+    ):
+        errors.append(
+            "compat-matrix: hosted-jitter does not exercise the pinned irl-srt-server runtime"
+        )
+    if "tests/compat/scenarios/jitter-stress.sh" not in hosted_commands:
+        errors.append("compat-matrix: hosted-jitter does not run jitter-stress")
+    if "sudo -n" not in hosted_commands:
+        errors.append("compat-matrix: hosted-jitter does not use the sanctioned sudo gate")
+    if ".pass == true" not in hosted_commands or ".skipped != true" not in hosted_commands:
+        errors.append("compat-matrix: hosted-jitter can accept a skip or misleading PASS")
+    if (
+        "REQUIRE_RS_SENDER=1" not in hosted_commands
+        or '.sender.kind == "rust"' not in hosted_commands
+    ):
+        errors.append("compat-matrix: hosted-jitter can fall back to the retired C sender")
+    hosted_uploads = [
+        step
+        for step in hosted_jitter.get("steps", [])
+        if isinstance(step, dict)
+        and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    if (
+        len(hosted_uploads) != 1
+        or hosted_uploads[0].get("if") != "${{ always() }}"
+        or hosted_uploads[0].get("with", {}).get("name")
+        != "hosted-jitter-${{ env.SRTLA_SOURCE_SHA }}"
+        or hosted_uploads[0].get("with", {}).get("if-no-files-found") != "error"
+    ):
+        errors.append("compat-matrix: hosted-jitter must always upload non-empty evidence")
+    require_ccache(
+        "compat-matrix",
+        "hosted-jitter",
+        hosted_jitter,
+        direct_build=True,
+    )
+if compat_jobs.get("generate-matrix", {}).get("if") != (
+    "${{ github.event_name != 'workflow_dispatch' }}"
+):
+    errors.append("compat-matrix: manual jitter dispatch also starts the pair matrix")
+
+jitter_script = (
+    repo_root / "tests" / "compat" / "scenarios" / "jitter-stress.sh"
+).read_text(encoding="utf-8")
+ready_marker = "wait_for_connection_count 1 10"
+caller_marker = "ffmpeg -hide_banner"
+if (
+    ready_marker not in jitter_script
+    or caller_marker not in jitter_script
+    or jitter_script.index(ready_marker) > jitter_script.index(caller_marker)
+):
+    errors.append(
+        "jitter-stress: media caller starts before an upstream link is ready"
+    )
+if (
+    'LINK2_SRC="10.173.${OCTET}.4"' not in jitter_script
+    or "LINK2_PEER=" in jitter_script
+):
+    errors.append(
+        "jitter-stress: second link does not preserve the receiver source address"
+    )
+
 for job_name in ("compat-blocking", "compat-informational"):
     require_ccache(
         "compat-matrix",
@@ -558,6 +683,7 @@ ccache_jobs = [
     static_test,
     compat_jobs.get("compat-blocking"),
     compat_jobs.get("compat-informational"),
+    compat_jobs.get("hosted-jitter"),
     compat_jobs.get("pcap-replay"),
     compat_jobs.get("upstream-drift"),
 ]

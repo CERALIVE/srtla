@@ -21,14 +21,15 @@
 # Topology — single-leg-shaped veth into a private netns (NOT loopback: netem on
 # `lo` shapes both legs and doubles the RTT, corrupting every latency assertion;
 # see tests/compat/lib/netem.sh). The receiver + sink live in the netns; the
-# sender drives TWO bonded source IPs that BOTH egress the one shaped host veth,
-# so a single netem_change retunes the jitter seen by BOTH links at once:
+# sender drives TWO bonded source IPs from the same subnet that BOTH egress the
+# one shaped host veth, so receiver replies retain one stable source address and
+# a single netem_change retunes the jitter seen by BOTH links at once:
 #
 #       host ns                              ns-srtla-<NAME>
 #   .------------------------.   veth pair   .----------------------.
 #   | srtla_send (host)      |               | srtla_rec  (in netns)|
 #   |   src .173.N.1  --------|---[ netem ]---|--> .173.N.2 :SRTLA   |
-#   |   src .174.N.1  --------|---[ jitter]---|--> (same dst, 2nd IP)|
+#   |   src .173.N.4  --------|---[ jitter]---|--> (same stable dst) |
 #   | ffmpeg -> :LOCAL_SRT    |               |   -> srt-sink :SINK  |
 #   '------------------------'    ^ shaped    '----------------------'
 #                                   host-end egress only (single-leg)
@@ -69,6 +70,9 @@ die()  { printf 'jitter-stress: %s\n' "$*" >&2; exit 2; }
 now_ms() { date +%s%3N; }
 
 BUILD_DIR="${SRTLA_BUILD_DIR:-}"
+SINK_LD_LIBRARY_PATH="${SINK_LD_LIBRARY_PATH:-}"
+SRTLA_SEND_RS_BIN="${SRTLA_SEND_RS_BIN:-}"
+REQUIRE_RS_SENDER="${REQUIRE_RS_SENDER:-0}"
 KEEP_LOGS=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -109,6 +113,29 @@ BUILD_DIR="$(resolve_build_dir)" || die \
 SRT_SINK="${BUILD_DIR}/tests/compat/srt-sink/srt-sink"
 SRTLA_REC="${BUILD_DIR}/srtla_rec"
 SRTLA_SEND="${BUILD_DIR}/srtla_send"
+
+[[ "$REQUIRE_RS_SENDER" =~ ^[01]$ ]] \
+  || die "REQUIRE_RS_SENDER must be 0 or 1"
+SENDER_BIN="$SRTLA_SEND"
+SENDER_KIND="c"
+if [[ -n "$SRTLA_SEND_RS_BIN" ]]; then
+  [[ -x "$SRTLA_SEND_RS_BIN" ]] \
+    || die "SRTLA_SEND_RS_BIN '$SRTLA_SEND_RS_BIN' is not executable"
+  SENDER_BIN="$SRTLA_SEND_RS_BIN"
+  SENDER_KIND="rust"
+elif [[ "$REQUIRE_RS_SENDER" == "1" ]]; then
+  mkdir -p "$RESULTS_DIR"
+  printf '{"scenario":"jitter-stress","skipped":true,"reason":"required srtla-send-rs binary unavailable"}\n' \
+    > "${RESULTS_DIR}/result.json"
+  log "SKIP jitter-stress: REQUIRE_RS_SENDER=1 but SRTLA_SEND_RS_BIN is unavailable"
+  exit 77
+fi
+
+if [[ -n "$SINK_LD_LIBRARY_PATH" ]]; then
+  [[ -d "$SINK_LD_LIBRARY_PATH" ]] \
+    || die "SINK_LD_LIBRARY_PATH '$SINK_LD_LIBRARY_PATH' is not a directory"
+  SINK_LD_LIBRARY_PATH="$(cd -- "$SINK_LD_LIBRARY_PATH" && pwd -P)"
+fi
 
 # Capability gate FIRST — clean SKIP (exit 77) when unprivileged, leaving no
 # state behind (mirrors netem_require / pcap-replay exit-77 SKIP semantics).
@@ -204,13 +231,25 @@ telemetry_max_conns() {
   printf '%s' "$best"
 }
 
+wait_for_connection_count() {
+  local expected="$1" deadline=$(( $(now_ms) + ${2} * 1000 )) n
+  while [[ "$(now_ms)" -lt "$deadline" ]]; do
+    n=$(jq -r '.connections | length' "$STATS_FILE" 2>/dev/null)
+    if [[ "$n" =~ ^[0-9]+$ && "$n" -ge "$expected" ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
 # --------------------------------------------------------------------------- #
 # Shape link 1 with phase-1 jitter and derive the topology. The library owns a  #
-# stable /30 derivation (host .1 / peer .2 on 10.173.<octet>.0/30); we read it   #
-# through its helpers and add a SECOND /30 (10.174.<octet>.0/30) on the same     #
-# veth+peer so a single shaped iface carries two bonded source IPs to one recv.  #
+# stable address derivation (host .1 / peer .2 on 10.173.<octet>.0); we widen  #
+# that link to /29 and add host .4, so both sender sockets target peer .2 and    #
+# every receiver reply keeps the source tuple each connected socket expects.    #
 # --------------------------------------------------------------------------- #
-log "==> setup: shape link with '${PHASE1_NETEM}' (build dir: ${BUILD_DIR})"
+log "==> setup: shape link with '${PHASE1_NETEM}' (build dir: ${BUILD_DIR}; sender: ${SENDER_KIND})"
 netem_setup "$NAME" $PHASE1_NETEM || die "netem_setup failed"
 
 NS="$(_netem_ns "$NAME")"
@@ -218,16 +257,14 @@ HOST_IF="$(_netem_hostif "$NAME")"
 PEER_IF="$(_netem_peerif "$NAME")"
 OCTET="$(_netem_octet "$NAME")"
 
-LINK1_SRC="$(_netem_host_ip "$NAME")"          # 10.173.<octet>.1 (host veth)
-RECV_IP="$(_netem_peer_ip "$NAME")"            # 10.173.<octet>.2 (netns, dst)
-LINK2_SRC="10.174.${OCTET}.1"                  # 2nd host source IP (same veth)
-LINK2_PEER="10.174.${OCTET}.2"                 # 2nd peer addr (same npeer)
+LINK1_SRC="$(_netem_host_ip "$NAME")"
+RECV_IP="$(_netem_peer_ip "$NAME")"
+LINK2_SRC="10.173.${OCTET}.4"
 
-# Second address pair on the existing (already-up, already-shaped) ifaces.
-ip addr add "${LINK2_SRC}/30" dev "$HOST_IF" 2>/dev/null \
+ip addr add "${LINK2_SRC}/29" dev "$HOST_IF" 2>/dev/null \
   || die "could not add 2nd host source IP ${LINK2_SRC} on ${HOST_IF}"
-ip netns exec "$NS" ip addr add "${LINK2_PEER}/30" dev "$PEER_IF" 2>/dev/null \
-  || die "could not add 2nd peer IP ${LINK2_PEER} in ${NS}"
+ip netns exec "$NS" ip addr replace "${RECV_IP}/29" dev "$PEER_IF" 2>/dev/null \
+  || die "could not widen receiver subnet for ${RECV_IP} in ${NS}"
 
 log "    links: ${LINK1_SRC} + ${LINK2_SRC}  ->  ${RECV_IP}:${SRTLA_PORT} (netns ${NS})"
 
@@ -236,7 +273,8 @@ log "    links: ${LINK1_SRC} + ${LINK2_SRC}  ->  ${RECV_IP}:${SRTLA_PORT} (netns
 # the host. srt-sink/receiver run via `ip netns exec` (same PID after exec, so   #
 # kill/wait at teardown still flush their results).                              #
 # --------------------------------------------------------------------------- #
-ip netns exec "$NS" "$SRT_SINK" --port "$SINK_PORT" --host 127.0.0.1 \
+ip netns exec "$NS" env LD_LIBRARY_PATH="$SINK_LD_LIBRARY_PATH" \
+    "$SRT_SINK" --port "$SINK_PORT" --host 127.0.0.1 \
     --result "$SINK_JSON" --latency "$SRT_LATENCY_MS" \
     --duration $(( PHASE_SEC * 3 + 40 )) >"${SINK_JSON%.json}.log" 2>&1 &
 SINK_PID=$!; track "$SINK_PID"
@@ -251,10 +289,19 @@ wait_for_marker "$RX_LOG" "srtla_rec is now running" 5 || die "receiver never ca
 printf '%s\n%s\n' "$LINK1_SRC" "$LINK2_SRC" > "$IPS_FILE"
 # RUST_LOG only affects the Rust fork sender (the C sender logs unconditionally);
 # without it the fork is silent and the both-links-added grep below sees nothing.
-RUST_LOG="${RUST_LOG:-info}" "$SRTLA_SEND" "$LOCAL_SRT_PORT" "$RECV_IP" "$SRTLA_PORT" "$IPS_FILE" \
+RUST_LOG="${RUST_LOG:-info}" "$SENDER_BIN" "$LOCAL_SRT_PORT" "$RECV_IP" "$SRTLA_PORT" "$IPS_FILE" \
     --stats-file "$STATS_FILE" >"$TX_LOG" 2>&1 &
 TX_PID=$!; track "$TX_PID"
-sleep 0.6
+
+# The sender binds its local SRT socket before its upstream links finish the
+# REG1/REG2/REG3 exchange. Starting ffmpeg after a fixed sleep races that
+# exchange: the caller can fail before any link is able to relay its handshake.
+# Telemetry lists established links only, so it is the authoritative readiness
+# signal and keeps this scenario sender-agnostic. One link is sufficient to
+# relay the caller handshake; the phase gates still require both bonded links.
+wait_for_connection_count 1 10 \
+  || die "sender did not establish an upstream link within 10s"
+log "    connections_ready=1"
 
 SRT_OPTS="mode=caller&transtype=live&latency=${SRT_LATENCY_US}&peerlatency=${SRT_LATENCY_US}&sndbuf=24000000&timeout=30000000"
 ffmpeg -hide_banner -loglevel warning -progress "$FF_PROGRESS" -re \
@@ -277,7 +324,7 @@ log "    handshake=${handshake} both_links_added=${both_links_added} (tx_pid=${T
 # during the phases count against us.
 reaps_conn_pre=$(count_re "$RX_LOG" "conn_removed")
 reaps_group_pre=$(count_re "$RX_LOG" "group_reaped")
-linkfail_pre=$(count_re "$TX_LOG" "connection failed, attempting to reconnect")
+linkfail_pre=$(count_re "$TX_LOG" "(connection failed, attempting to reconnect|timed out; attempting full socket reconnection)")
 
 # --------------------------------------------------------------------------- #
 # Run the three jitter phases on the SAME processes; sample per-phase progress,  #
@@ -308,7 +355,7 @@ read -r B3 CONNS3 ALIVE3 < <(run_phase 3 $PHASE3_NETEM)
 # (an intentional teardown later would idle-reap the group — not what we test).
 reaps_conn_post=$(count_re "$RX_LOG" "conn_removed")
 reaps_group_post=$(count_re "$RX_LOG" "group_reaped")
-linkfail_post=$(count_re "$TX_LOG" "connection failed, attempting to reconnect")
+linkfail_post=$(count_re "$TX_LOG" "(connection failed, attempting to reconnect|timed out; attempting full socket reconnection)")
 
 # --------------------------------------------------------------------------- #
 # Teardown — SINK FIRST so the intentional sender/ffmpeg stop is never counted   #
@@ -403,6 +450,7 @@ jq -n \
   --argjson disconnects "$disc" \
   --argjson shaping_residue "$shaping_residue" \
   --argjson tx_pid "$TX_PID" --argjson rx_pid "$RX_PID" \
+  --arg sender_kind "$SENDER_KIND" --arg sender_bin "$SENDER_BIN" \
   --arg phase1 "$PHASE1_NETEM" --arg phase2 "$PHASE2_NETEM" --arg phase3 "$PHASE3_NETEM" \
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{
@@ -418,7 +466,7 @@ jq -n \
             {netem:$phase3, total_size:$b3, delta:$d3, telemetry_conns:$conns3}],
     min_phase_bytes:$min_phase_bytes,
     reaps:{conn_removed:$reaps_conn, group_reaped:$reaps_group},
-    sender:{new_link_failures:$linkfails},
+    sender:{kind:$sender_kind, binary:$sender_bin, new_link_failures:$linkfails},
     stream:{bytes_received:$bytes, disconnects:$disconnects},
     shaping_residue:$shaping_residue,
     timestamp:$ts

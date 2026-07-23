@@ -126,7 +126,7 @@ driving test (no fix without a test).
 |----------|--------|
 | `link-drop.sh` | Two bonded loopback links; isolating one with iptables makes the sender shift off it within `CONN_TIMEOUT` (survivor stays up) and re-register it on restore. SKIPs cleanly without iptables/sudo. |
 | `sighup-reload.sh` | Appending a source IP + SIGHUP joins the new link to the existing group with 0 disconnects (no re-handshake); a garbage file + SIGHUP is refused without crashing or dropping links. |
-| `jitter-stress.sh` | Two bonded links under three escalating live `netem` jitter phases (`150ms ±50/100/200ms`, no loss) keep streaming with strictly-increasing per-phase throughput, ZERO receiver link reaps, both links registered, and `disconnects == 0` — proving jitter alone never reaps a healthy link (stresses `RTT_VARIANCE_THRESHOLD=50ms`). SKIPs cleanly (exit 77) without `CAP_NET_ADMIN`+`ip`/`tc`/`ping`. |
+| `jitter-stress.sh` | Two bonded links under three escalating live `netem` jitter phases (`150ms ±50/100/200ms`, no loss) keep streaming with strictly-increasing per-phase throughput, ZERO receiver link reaps, both links registered, and `disconnects == 0` — proving jitter alone never reaps a healthy link (stresses `RTT_VARIANCE_THRESHOLD=50ms`). The media caller starts only after telemetry reports an established relay link, preventing a startup-race false failure; the per-phase gates still require both links. SKIPs cleanly (exit 77) without `CAP_NET_ADMIN`+`ip`/`tc`/`ping`; the hosted privileged lane treats that skip as a job failure. |
 
 > The `link-drop.sh` verdict gates on the **sender's** deterministic behavior
 > (shift + survivor-up + recovery + media delivered). End-to-end SRT
