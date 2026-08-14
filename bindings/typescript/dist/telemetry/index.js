@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 /**
  * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
@@ -28,7 +28,7 @@ export const SENDER_TELEMETRY_STALE_MS = 5000;
  * `SENDER_TELEMETRY_PATH_PREFIX` and the receiver's `SRT_SOCKET_INFO_PREFIX`.
  * The live file is `<prefix><listen_port>.json`.
  */
-export const SENDER_TELEMETRY_PATH_PREFIX = "/tmp/srtla-send-stats-";
+export const SENDER_TELEMETRY_PATH_PREFIX = '/tmp/srtla-send-stats-';
 /**
  * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.

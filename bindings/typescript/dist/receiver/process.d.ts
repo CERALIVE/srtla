@@ -1,5 +1,5 @@
-import type { SpawnOptions } from "node:child_process";
-import type { SrtlaRecOptionsInput } from "./types.js";
+import type { SpawnOptions } from 'node:child_process';
+import type { SrtlaRecOptionsInput } from './types.js';
 export interface SpawnSrtlaRecOptions {
     args: Array<string>;
     execPath?: string;

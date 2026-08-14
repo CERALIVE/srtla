@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 
-import { readTelemetry } from "./index.js";
+import { readTelemetry } from './index.js';
 
 // The 5000 ms staleness window is asserted with HARDCODED snapshot ages — never
 // derived from SENDER_TELEMETRY_STALE_MS — so this test is falsifiable: lowering
@@ -27,9 +27,9 @@ afterEach(async () => {
 	}
 });
 
-describe("readTelemetry staleness boundary (Todo 18)", () => {
-	test("snapshot 4999 ms old is fresh", async () => {
-		const nowSpy = spyOn(Date, "now").mockReturnValue(FIXED_NOW);
+describe('readTelemetry staleness boundary (Todo 18)', () => {
+	test('snapshot 4999 ms old is fresh', async () => {
+		const nowSpy = spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
 		try {
 			expect(await readTelemetry(await snapshotAged(4999))).not.toBeNull();
 		} finally {
@@ -37,8 +37,8 @@ describe("readTelemetry staleness boundary (Todo 18)", () => {
 		}
 	});
 
-	test("snapshot 5000 ms old is fresh, 5001 ms old is stale (falsifies the 5000 ms threshold)", async () => {
-		const nowSpy = spyOn(Date, "now").mockReturnValue(FIXED_NOW);
+	test('snapshot 5000 ms old is fresh, 5001 ms old is stale (falsifies the 5000 ms threshold)', async () => {
+		const nowSpy = spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
 		try {
 			expect(await readTelemetry(await snapshotAged(5000))).not.toBeNull();
 			expect(await readTelemetry(await snapshotAged(5001))).toBeNull();

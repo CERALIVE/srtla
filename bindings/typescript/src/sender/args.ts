@@ -1,4 +1,4 @@
-import { srtlaSendOptionsSchema, type SrtlaSendOptionsInput } from "./types.js";
+import { type SrtlaSendOptionsInput, srtlaSendOptionsSchema } from './types.js';
 
 /**
  * @deprecated Use `@ceralive/srtla-send` instead.
@@ -25,10 +25,10 @@ export function buildSrtlaSendArgs(input: SrtlaSendOptionsInput): SrtlaSendArgsR
 		options.ipsFile,
 	];
 	if (options.verbose) {
-		args.push("--verbose");
+		args.push('--verbose');
 	}
 	if (options.statsFile) {
-		args.push("--stats-file", options.statsFile);
+		args.push('--stats-file', options.statsFile);
 	}
 	return { args, options };
 }

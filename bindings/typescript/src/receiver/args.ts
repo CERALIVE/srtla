@@ -1,4 +1,4 @@
-import { srtlaRecOptionsSchema, type SrtlaRecOptionsInput } from "./types.js";
+import { type SrtlaRecOptionsInput, srtlaRecOptionsSchema } from './types.js';
 
 export interface SrtlaRecArgsResult {
 	args: Array<string>;
@@ -12,15 +12,15 @@ export interface SrtlaRecArgsResult {
 export function buildSrtlaRecArgs(input: SrtlaRecOptionsInput): SrtlaRecArgsResult {
 	const options = srtlaRecOptionsSchema.parse(input);
 	const args: Array<string> = [
-		"--srtla_port",
+		'--srtla_port',
 		String(options.srtlaPort),
-		"--srt_hostname",
+		'--srt_hostname',
 		options.srtHostname,
-		"--srt_port",
+		'--srt_port',
 		String(options.srtPort),
 	];
 	if (options.logLevel) {
-		args.push("--log_level", options.logLevel);
+		args.push('--log_level', options.logLevel);
 	}
 	return { args, options };
 }

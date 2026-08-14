@@ -1,12 +1,12 @@
-import { z } from "zod";
+import { z } from 'zod';
 /** spdlog log levels accepted by `srtla_rec --log_level`. */
 export declare const logLevelSchema: z.ZodEnum<{
-    error: "error";
-    trace: "trace";
-    debug: "debug";
-    info: "info";
-    warn: "warn";
     critical: "critical";
+    debug: "debug";
+    error: "error";
+    info: "info";
+    trace: "trace";
+    warn: "warn";
 }>;
 export type LogLevel = z.infer<typeof logLevelSchema>;
 /**
@@ -19,12 +19,12 @@ export declare const srtlaRecOptionsSchema: z.ZodObject<{
     srtHostname: z.ZodDefault<z.ZodString>;
     srtPort: z.ZodDefault<z.ZodNumber>;
     logLevel: z.ZodOptional<z.ZodEnum<{
-        error: "error";
-        trace: "trace";
-        debug: "debug";
-        info: "info";
-        warn: "warn";
         critical: "critical";
+        debug: "debug";
+        error: "error";
+        info: "info";
+        trace: "trace";
+        warn: "warn";
     }>>;
     execPath: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;

@@ -1,8 +1,8 @@
-import { spawnSrtla, sendSignal, isRunning } from "../shared/process.js";
-import { resolveExec } from "../shared/exec.js";
-import { buildSrtlaRecArgs } from "./args.js";
-const DEFAULT_BINARY = "srtla_rec";
-const DEFAULT_SYSTEM_PATH = "/usr/bin/srtla_rec";
+import { resolveExec } from '../shared/exec.js';
+import { isRunning, sendSignal, spawnSrtla } from '../shared/process.js';
+import { buildSrtlaRecArgs } from './args.js';
+const DEFAULT_BINARY = 'srtla_rec';
+const DEFAULT_SYSTEM_PATH = '/usr/bin/srtla_rec';
 export function getSrtlaRecExec(execPath) {
     return resolveExec({
         execPath,
@@ -20,7 +20,7 @@ export function spawnSrtlaRec(options) {
     });
 }
 export async function sendSrtlaRecHup() {
-    return sendSignal({ processName: DEFAULT_BINARY, signal: "-HUP" });
+    return sendSignal({ processName: DEFAULT_BINARY, signal: '-HUP' });
 }
 export async function sendSrtlaRecTerm() {
     return sendSignal({ processName: DEFAULT_BINARY });
