@@ -1,4 +1,4 @@
-import { srtlaRecOptionsSchema, type SrtlaRecOptionsInput } from "./types.js";
+import { type SrtlaRecOptionsInput, srtlaRecOptionsSchema } from './types.js';
 export interface SrtlaRecArgsResult {
     args: Array<string>;
     options: ReturnType<typeof srtlaRecOptionsSchema.parse>;

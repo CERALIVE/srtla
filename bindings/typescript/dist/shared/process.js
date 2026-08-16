@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { resolveExec } from "./exec.js";
+import { spawn } from 'node:child_process';
+import { resolveExec } from './exec.js';
 export function spawnSrtla(options) {
     const exec = resolveExec({
         execPath: options.execPath,
@@ -12,18 +12,18 @@ export function spawnSrtla(options) {
  * Send a signal via killall; defaults to SIGTERM.
  * killall returns 1 when no processes match; treat as ok.
  */
-export async function sendSignal({ processName, killall, signal, }) {
+export async function sendSignal({ processName, killall, signal }) {
     const args = signal ? [signal, processName] : [processName];
     if (killall) {
         await killall(args);
         return;
     }
     return new Promise((resolve, reject) => {
-        const proc = spawn("killall", args, {
-            stdio: "ignore",
+        const proc = spawn('killall', args, {
+            stdio: 'ignore',
         });
-        proc.on("close", () => resolve());
-        proc.on("error", reject);
+        proc.on('close', () => resolve());
+        proc.on('error', reject);
     });
 }
 /**
@@ -31,8 +31,8 @@ export async function sendSignal({ processName, killall, signal, }) {
  */
 export async function isRunning(processName) {
     return new Promise((resolve) => {
-        const proc = spawn("pgrep", ["-x", processName], { stdio: "ignore" });
-        proc.on("close", (code) => resolve(code === 0));
-        proc.on("error", () => resolve(false));
+        const proc = spawn('pgrep', ['-x', processName], { stdio: 'ignore' });
+        proc.on('close', (code) => resolve(code === 0));
+        proc.on('error', () => resolve(false));
     });
 }

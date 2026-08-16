@@ -1,4 +1,4 @@
-import { srtlaRecOptionsSchema } from "./types.js";
+import { srtlaRecOptionsSchema } from './types.js';
 /**
  * Build CLI args for srtla_rec.
  * Shape: --srtla_port <port> --srt_hostname <host> --srt_port <port> [--log_level <level>]
@@ -6,15 +6,15 @@ import { srtlaRecOptionsSchema } from "./types.js";
 export function buildSrtlaRecArgs(input) {
     const options = srtlaRecOptionsSchema.parse(input);
     const args = [
-        "--srtla_port",
+        '--srtla_port',
         String(options.srtlaPort),
-        "--srt_hostname",
+        '--srt_hostname',
         options.srtHostname,
-        "--srt_port",
+        '--srt_port',
         String(options.srtPort),
     ];
     if (options.logLevel) {
-        args.push("--log_level", options.logLevel);
+        args.push('--log_level', options.logLevel);
     }
     return { args, options };
 }

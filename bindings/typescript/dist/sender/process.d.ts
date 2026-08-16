@@ -1,5 +1,5 @@
-import type { SpawnOptions } from "node:child_process";
-import type { SrtlaSendOptionsInput } from "./types.js";
+import type { SpawnOptions } from 'node:child_process';
+import type { SrtlaSendOptionsInput } from './types.js';
 /**
  * @deprecated Use `@ceralive/srtla-send` instead.
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.

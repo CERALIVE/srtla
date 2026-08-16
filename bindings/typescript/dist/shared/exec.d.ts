@@ -12,4 +12,4 @@ export interface ExecResolveOptions {
  * 4. If the systemPath exists, use it.
  * 5. Fallback to the binaryName (let PATH decide at spawn time).
  */
-export declare function resolveExec({ execPath, binaryName, systemPath, }: ExecResolveOptions): string;
+export declare function resolveExec({ execPath, binaryName, systemPath }: ExecResolveOptions): string;

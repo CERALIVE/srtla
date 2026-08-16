@@ -1,5 +1,5 @@
-import { type ChildProcess, type SpawnOptions } from "node:child_process";
-import { type ExecResolveOptions } from "./exec.js";
+import { type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { type ExecResolveOptions } from './exec.js';
 export interface SpawnSrtlaOptions extends Partial<ExecResolveOptions> {
     args: Array<string>;
     spawnOptions?: SpawnOptions;
@@ -16,7 +16,7 @@ export interface SignalOptions {
  * Send a signal via killall; defaults to SIGTERM.
  * killall returns 1 when no processes match; treat as ok.
  */
-export declare function sendSignal({ processName, killall, signal, }: SignalOptions): Promise<void>;
+export declare function sendSignal({ processName, killall, signal }: SignalOptions): Promise<void>;
 /**
  * Check if a process with the given name is running via pgrep.
  */

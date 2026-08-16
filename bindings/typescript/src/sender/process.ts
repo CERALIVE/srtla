@@ -1,12 +1,11 @@
-import type { SpawnOptions } from "node:child_process";
+import type { SpawnOptions } from 'node:child_process';
+import { resolveExec } from '../shared/exec.js';
+import { isRunning, sendSignal, spawnSrtla } from '../shared/process.js';
+import { buildSrtlaSendArgs } from './args.js';
+import type { SrtlaSendOptionsInput } from './types.js';
 
-import { spawnSrtla, sendSignal, isRunning } from "../shared/process.js";
-import { resolveExec } from "../shared/exec.js";
-import { buildSrtlaSendArgs } from "./args.js";
-import type { SrtlaSendOptionsInput } from "./types.js";
-
-const DEFAULT_BINARY = "srtla_send";
-const DEFAULT_SYSTEM_PATH = "/usr/bin/srtla_send";
+const DEFAULT_BINARY = 'srtla_send';
+const DEFAULT_SYSTEM_PATH = '/usr/bin/srtla_send';
 
 /**
  * @deprecated Use `@ceralive/srtla-send` instead.
@@ -49,7 +48,7 @@ export function spawnSrtlaSend(options: SpawnSrtlaSendOptions) {
  * The C `srtla_send` is deprecated; use the Rust fork (srtla-send-rs) for new code.
  */
 export async function sendSrtlaSendHup(): Promise<void> {
-	return sendSignal({ processName: DEFAULT_BINARY, signal: "-HUP" });
+	return sendSignal({ processName: DEFAULT_BINARY, signal: '-HUP' });
 }
 
 /**

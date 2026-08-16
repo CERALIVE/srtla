@@ -82,6 +82,26 @@ cmake -B build && cmake --build build
 cd bindings/typescript && bun install && bun run build
 ```
 
+### TS bindings gate scripts
+
+`bindings/typescript` runs TypeScript 7 with `module`/`moduleResolution` = `nodenext`
+(TS7 removed `node`/`node10` resolution) and lints via the shared Biome canon
+(`@ceralive/biome-config`). Script names follow the workspace convention, matching
+`srtla-send-rs/bindings/typescript`:
+
+| Script | Command | Purpose |
+|--------|---------|---------|
+| `lint` | `biome check .` | Biome canon lint + format check |
+| `typecheck` | `tsc -p tsconfig.json --noEmit` | Type gate |
+| `build` | `tsc -p tsconfig.json` | Emits `dist/` (tracked, consumed as `main`) |
+| `test` | `bun test` | Unit suite |
+
+`bindings.yml` runs `lint`, `typecheck`, `build`, `test` as separate steps. Because the
+package emits runtime JS consumed via `main: dist/index.js`, `moduleResolution` must stay
+`nodenext` — `bundler` would permit extensionless specifiers that survive into the emitted
+JS and break Node resolution. TS7 also defaults `types` to `[]`, so `tsconfig.json` sets
+`"types": ["bun"]` explicitly for `bun:test` and the `Bun` global.
+
 ## CI VALIDATION AND BUILD CACHE
 
 The compiling C++ lanes in `build-check.yml`, `static-analysis.yml`,
