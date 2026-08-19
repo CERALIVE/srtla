@@ -209,9 +209,12 @@ exactly one current object).
 
 | Field | Type | Units / Range | Wire source | Notes |
 |-------|------|---------------|-------------|-------|
+| `schema_version` | integer | currently **1** | — | Contract version of this snapshot. See "Schema versioning" below. |
 | `last_updated_ms` | integer | Unix epoch **milliseconds** | producer clock (`get_ms`) | Wall-clock time this snapshot was written. Drives staleness. |
 | `connections` | array of object | — | — | Per-connection records. **`[]` when no active links** (not omitted, not `null`). |
 | `connections[].conn_id` | string | stable, unique per connection | wire `conn_id` (`uint32`), stringified | Stable identifier for one uplink slot for the life of the connection. String for forward flexibility. |
+| `connections[].iface` | string \| absent | network interface name (e.g. `usb0`, `wlan0`) | sender source-IP → interface resolution | **Additive sender identity field.** Names the local interface this uplink is bound to, so the UI can label a link by interface instead of an opaque slot number. Absent (or omitted) when the sender cannot resolve the source IP to an interface — consumers must treat it as optional. |
+| `connections[].link_id` | string \| absent | stable, unique per uplink | sender-assigned uplink identity | **Additive sender identity field.** Stable identity for an uplink *across reconnects*, unlike `conn_id`, which is only stable for the life of one connection. Lets the UI keep a link's history when a connection is torn down and re-established. Absent when the sender does not assign one. |
 | `connections[].rtt_ms` | integer | **milliseconds**, ≥ 0 | wire `rtt_ms` (`uint32`) | Sender-measured round-trip time on this link. |
 | `connections[].nak_count` | integer | **count**, cumulative, ≥ 0 | wire `nak_count` (`uint32`) | Cumulative NAKs observed on this link since connection start. |
 | `connections[].weight_percent` | integer | **percent**, 0–100 | sender load-balancer `weight_percent` | Current load-balancing weight (100=optimal … 10=critical). |
@@ -223,16 +226,43 @@ exactly one current object).
 > top-level `connections` and `last_updated_ms`; per-connection `conn_id`,
 > `rtt_ms`, `nak_count`, `weight_percent`. `window`, `in_flight`, and
 > `bitrate_bps` are included for completeness and round-trip fidelity with
-> `connection_info_t`.
+> `connection_info_t`. The sender identity fields `iface` and `link_id` are
+> **optional** — a consumer must render correctly without them.
+
+### Schema versioning (additive-field rule)
+
+`schema_version` is **1**, and it stays 1 through this change.
+
+Adding `iface` and `link_id` is an **additive-only** change: both are optional
+per-connection fields, every previously-defined field keeps its name, type,
+units, and meaning, and a reader written against the original schema parses a
+snapshot carrying them without modification. That is the whole test, and it is
+the rule going forward:
+
+- **Adding a new optional field never bumps `schema_version`.** A producer may
+  start emitting one at any time; consumers ignore what they do not know.
+- **Only a breaking, incompatible change bumps it** — removing or renaming a
+  field, changing a field's type or units, or making a previously-optional field
+  required. Such a change would ship as `schema_version: 2`.
+- Consumers **must not** reject a snapshot for carrying unknown fields, and
+  **must not** require `schema_version` to be present: snapshots written before
+  this field was documented carry no `schema_version` and are version 1 by
+  definition.
+
+The same rule already governs the TypeScript bindings, whose existing exports
+are frozen and whose telemetry surface is additive-only.
 
 ### Canonical example (parses cleanly)
 
 ```json
 {
+  "schema_version": 1,
   "last_updated_ms": 1749556546000,
   "connections": [
     {
       "conn_id": "0",
+      "iface": "usb0",
+      "link_id": "usb0:10.0.0.10",
       "rtt_ms": 42,
       "nak_count": 3,
       "weight_percent": 85,
@@ -242,6 +272,8 @@ exactly one current object).
     },
     {
       "conn_id": "1",
+      "iface": "wlan0",
+      "link_id": "wlan0:192.168.1.50",
       "rtt_ms": 73,
       "nak_count": 11,
       "weight_percent": 55,
@@ -257,6 +289,7 @@ exactly one current object).
 
 ```json
 {
+  "schema_version": 1,
   "last_updated_ms": 1749556546000,
   "connections": []
 }
