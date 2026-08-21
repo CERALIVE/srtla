@@ -3,6 +3,7 @@
 	"version": "0.2.0",
 	"description": "Type-safe helpers for srtla_send and srtla_rec (args, validation, process helpers).",
 	"type": "module",
+	"packageManager": "bun@1.4.0",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"exports": {
@@ -37,7 +38,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.8",
 		"@ceralive/biome-config": "^2026.8.0",
-		"@types/bun": "^1.3.14",
+		"@types/bun": "^1.4.0",
 		"typescript": "^7.0.2"
 	},
 	"license": "AGPL-3.0",
