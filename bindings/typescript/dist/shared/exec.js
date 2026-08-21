@@ -1,26 +1,19 @@
-import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 /**
- * Try to find an executable in the system PATH using 'which' (Unix) or 'where' (Windows).
+ * Try to find an executable in the system PATH.
  * Returns the full path if found, or undefined if not found.
+ *
+ * `Bun.which` replaces the previous `execSync('which …')`: it performs the same
+ * PATH scan without a shell, so a binary name is never interpreted as a command
+ * line. It returns null instead of throwing when nothing matches, which is why
+ * the old try/catch is gone — this function is total. The existence re-check is
+ * kept so a path that disappears between lookup and use still yields undefined.
  */
 function findInPath(binaryName) {
-    try {
-        const isWindows = process.platform === 'win32';
-        const command = isWindows ? `where ${binaryName}` : `which ${binaryName}`;
-        const result = execSync(command, {
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-        }).trim();
-        // 'where' on Windows may return multiple lines, take the first
-        const firstLine = result.split('\n')[0]?.trim();
-        if (firstLine && fs.existsSync(firstLine)) {
-            return firstLine;
-        }
-    }
-    catch {
-        // Command failed or binary not found in PATH
+    const resolved = Bun.which(binaryName);
+    if (resolved && fs.existsSync(resolved)) {
+        return resolved;
     }
     return undefined;
 }
@@ -29,7 +22,7 @@ function findInPath(binaryName) {
  * Resolution order:
  * 1. If execPath is a file, use it directly.
  * 2. If execPath is a directory, append binaryName.
- * 3. Try to find the binary in the system PATH using 'which'/'where'.
+ * 3. Try to find the binary in the system PATH.
  * 4. If the systemPath exists, use it.
  * 5. Fallback to the binaryName (let PATH decide at spawn time).
  */

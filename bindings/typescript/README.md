@@ -9,6 +9,13 @@ Type-safe helpers for `srtla_send` and `srtla_rec`:
 - IP list utilities (`writeIpList`, `ipListSchema`)
 - Sender telemetry reader (`readTelemetry`, `watchTelemetry`, `telemetrySchema`) — Bun-native, ADR-001
 
+## Runtime
+
+This package targets the **Bun** runtime. The telemetry reader uses `Bun.file` and
+executable resolution uses `Bun.which`. The spawn helpers deliberately keep
+`node:child_process` — they return Node's `ChildProcess` and accept `SpawnOptions`
+as part of the frozen public API, and that runs under Bun's node-compat layer.
+
 ## Sender usage
 
 ```ts
