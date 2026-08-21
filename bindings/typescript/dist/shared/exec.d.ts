@@ -8,7 +8,7 @@ export interface ExecResolveOptions {
  * Resolution order:
  * 1. If execPath is a file, use it directly.
  * 2. If execPath is a directory, append binaryName.
- * 3. Try to find the binary in the system PATH using 'which'/'where'.
+ * 3. Try to find the binary in the system PATH.
  * 4. If the systemPath exists, use it.
  * 5. Fallback to the binaryName (let PATH decide at spawn time).
  */

@@ -448,4 +448,34 @@ The mixture catalog is EMPTY until the gain-hunt evidence gate passes.
 - Don't modify the TS bindings API without checking `UPSTREAM MERGE STATUS` above — existing exports are frozen; new functionality must be additive
 - Don't add `srtla` to `irl-srt-server` — it uses system libsrt directly, no srtla dep
 - Don't confuse `srtla_send` (device) with `srtla_rec` (server/cloud)
-- Don't extend the `node:child_process` debt in bindings — new code uses Bun-native APIs (`Bun.file`, `Bun.connect`)
+- Don't extend the `node:child_process` debt in bindings — new code uses Bun-native APIs (`Bun.file`, `Bun.connect`). **Adjudicated 2026-08: retained where the frozen API pins Node types; migrated elsewhere** — see below before "fixing" a remaining import
+
+### `node:child_process` adjudication (2026-08)
+
+The remaining `node:child_process` imports in `bindings/typescript` are **deliberate and
+load-bearing**, not leftover debt. The public API is frozen (see `UPSTREAM MERGE STATUS`),
+and part of what it froze is *Node's own types*: `spawnSrtla`, `spawnSrtlaSend`,
+`spawnSrtlaRec`, `buildAndSpawnSrtlaSend`, and `buildAndSpawnSrtlaRec` all return
+`ChildProcess`, and every `spawnOptions` parameter is a `SpawnOptions`. Bun's
+`Subprocess` is a different type with a different shape, so swapping in `Bun.spawn` at
+those sites would silently rewrite the exported contract for CeraUI's backend. Running
+`node:child_process` under Bun's node-compat layer **is** the sanctioned runtime path here.
+
+| File | Node type in the emitted `.d.ts` | Verdict |
+|------|----------------------------------|---------|
+| `src/shared/process.ts` | `ChildProcess` return, `SpawnOptions` param | **retain** |
+| `src/sender/process.ts` | `SpawnOptions` param, `ChildProcess` return | **retain** |
+| `src/receiver/process.ts` | `SpawnOptions` param, `ChildProcess` return | **retain** |
+| `src/shared/exec.ts` | none — `execSync` was module-private | **migrated** → `Bun.which` |
+
+`src/shared/exec.ts` was the one genuinely migratable site: its `execSync('which …')`
+lookup lived inside a non-exported helper, so no Node type ever reached `exec.d.ts`.
+It now uses `Bun.which`, which performs the same PATH scan without a shell — the
+resolution ladder and the not-found fallthrough (return the bare binary name, never
+throw) are unchanged and pinned by `src/shared/exec.test.ts`. Dropping the shell also
+dropped a command-injection surface: the old path evaluated its argument through
+`/bin/sh -c`, so a name containing `;` executed the trailing command.
+
+The rule for new code is unchanged — reach for Bun-native APIs first. The rule for
+*existing* code is: a `node:child_process` import whose types surface in `dist/**/*.d.ts`
+stays until the API is deliberately versioned.
