@@ -9,7 +9,7 @@
       },
       "devDependencies": {
         "@biomejs/biome": "^2.5.9",
-        "@ceralive/biome-config": "^2026.8.0",
+        "@ceralive/biome-config": "2026.8.1",
         "@types/bun": "^1.4.0",
         "typescript": "^7.0.2",
       },
@@ -34,7 +34,7 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.9", "", { "os": "win32", "cpu": "x64" }, "sha512-Yiq0H56LjXSSw/hd9YkXgSLQfzyDJzbzU2TezozxyNw+uKWAqOtqGVvBfzKRRDiaFF5avGAhHdWKx7LtDOShUw=="],
 
-    "@ceralive/biome-config": ["@ceralive/biome-config@2026.8.0", "", {}, "sha512-TSlMbinvdzGriJWQwTwUUVtXXnRDp8OzE3w2848+1jl5I35tzf+rt8J4B3aSQvwhsLHkGqb93UBvD21+hQ8wQQ=="],
+    "@ceralive/biome-config": ["@ceralive/biome-config@2026.8.1", "", {}, "sha512-SAqNoi2sc21HMwtY1UqrVqJtNMdcfrjEqVI+RMbbr+nhRC/vPkbHfRzavrNA5IYXeL6wJNDVhFWlyWDw3R3TtA=="],
 
     "@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
 
