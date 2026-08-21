@@ -102,6 +102,12 @@ package emits runtime JS consumed via `main: dist/index.js`, `moduleResolution` 
 JS and break Node resolution. TS7 also defaults `types` to `[]`, so `tsconfig.json` sets
 `"types": ["bun"]` explicitly for `bun:test` and the `Bun` global.
 
+The bindings toolchain is pinned to Bun 1.4.0 (`packageManager` and CI); `@types/bun`
+tracks the newest published typings independently because its release can lag the runtime.
+The dependency set is refreshed with Bun's latest stable resolver. The TypeScript 7
+`^7.0.2` pin and `nodenext` module settings remain unchanged, and the public exports stay
+frozen.
+
 ## CI VALIDATION AND BUILD CACHE
 
 The compiling C++ lanes in `build-check.yml`, `static-analysis.yml`,
