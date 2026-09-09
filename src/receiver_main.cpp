@@ -12,6 +12,7 @@
 #include <string>
 
 #include "connection/connection_registry.h"
+#include "metrics/prometheus.h"
 #include "protocol/srt_handler.h"
 #include "protocol/srtla_handler.h"
 #include "quality/load_balancer.h"
@@ -60,6 +61,17 @@ int main(int argc, char **argv) {
       .help("Port of the downstream SRT server")
       .default_value(static_cast<uint16_t>(4001))
       .scan<'d', uint16_t>();
+  args.add_argument("--metrics_port")
+      .help("Port to serve Prometheus metrics on over HTTP (0 disables)")
+      .default_value(static_cast<uint16_t>(0))
+      .scan<'d', uint16_t>();
+  args.add_argument("--metrics_bind")
+      .help("Numeric address the metrics endpoint binds to (:: for every interface)")
+      .default_value(std::string{"127.0.0.1"});
+  args.add_argument("--metrics_detail")
+      .help("Also export per-connection metrics (one series set per client address)")
+      .default_value(false)
+      .implicit_value(true);
   args.add_argument("--log_level")
       .help("Set logging level (trace, debug, info, warn, error, critical)")
       .default_value(std::string{"info"});
@@ -76,6 +88,9 @@ int main(int argc, char **argv) {
   const std::string srt_hostname = args.get<std::string>("--srt_hostname");
   const std::string srt_port = std::to_string(args.get<uint16_t>("--srt_port"));
   const std::string log_level = args.get<std::string>("--log_level");
+  const uint16_t metrics_port = args.get<uint16_t>("--metrics_port");
+  const std::string metrics_bind = args.get<std::string>("--metrics_bind");
+  const bool metrics_detail = args.get<bool>("--metrics_detail");
 
   if (log_level == "trace") {
     spdlog::set_level(spdlog::level::trace);
@@ -159,6 +174,8 @@ int main(int argc, char **argv) {
                                               metrics_collector, rate_limiter);
   srtla::quality::QualityEvaluator quality_evaluator;
   srtla::quality::LoadBalancer load_balancer;
+  srtla::metrics::Exporter metrics_exporter(registry, rate_limiter);
+  metrics_exporter.start(metrics_bind, metrics_port, epoll_fd, metrics_detail);
 
   spdlog::info("srtla_rec is now running");
 
@@ -189,6 +206,8 @@ int main(int argc, char **argv) {
       group_cnt = registry.groups().size();
       if (events[i].data.ptr == nullptr) {
         srtla_handler.process_packets(ts);
+      } else if (events[i].data.ptr == &metrics_exporter) {
+        metrics_exporter.handle_event();
       } else {
         auto raw_group = static_cast<srtla::connection::ConnectionGroup *>(
             events[i].data.ptr);

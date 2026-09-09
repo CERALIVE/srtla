@@ -32,9 +32,20 @@
 #define ADDR_BUF_SZ 50
 char _global_addr_buf[ADDR_BUF_SZ];
 const char *print_addr(struct sockaddr *addr) {
+  // The SRTLA socket is dual-stack, so client addresses are sockaddr_in6 with
+  // v4-mapped addresses. Casting those to sockaddr_in reads sin6_flowinfo as
+  // the address, which printed every client as "::ffff".
+  if (addr->sa_family == AF_INET6) {
+    struct sockaddr_in6 *ain6 = (struct sockaddr_in6 *)addr;
+    if (IN6_IS_ADDR_V4MAPPED(&ain6->sin6_addr)) {
+      return inet_ntop(AF_INET, &ain6->sin6_addr.s6_addr[12], _global_addr_buf,
+                       ADDR_BUF_SZ);
+    }
+    return inet_ntop(AF_INET6, &ain6->sin6_addr, _global_addr_buf, ADDR_BUF_SZ);
+  }
+
   struct sockaddr_in *ain = (struct sockaddr_in *)addr;
-  return inet_ntop(ain->sin_family, &ain->sin_addr, _global_addr_buf,
-                   ADDR_BUF_SZ);
+  return inet_ntop(AF_INET, &ain->sin_addr, _global_addr_buf, ADDR_BUF_SZ);
 }
 
 int port_no(struct sockaddr *addr) {

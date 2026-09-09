@@ -3,6 +3,7 @@
 #include <sys/epoll.h>
 
 #include "../connection/connection_registry.h"
+#include "../metrics/prometheus.h"
 #include "../utils/auth_rate_limiter.h"
 #include "../utils/network_utils.h"
 
@@ -21,7 +22,9 @@ public:
 
 private:
     bool ensure_group_socket(connection::ConnectionGroupPtr group);
-    void remove_group(connection::ConnectionGroupPtr group);
+    // reason labels the srtla_groups_removed_total counter for this teardown.
+    void remove_group(connection::ConnectionGroupPtr group,
+                      metrics::Counter reason = metrics::GROUPS_REMOVED_SRT_ERROR);
 
     int srtla_socket_;
     struct sockaddr_storage srt_addr_ {};

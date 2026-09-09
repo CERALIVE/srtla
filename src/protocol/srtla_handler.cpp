@@ -15,6 +15,7 @@ extern "C" {
 #include "../common.h"
 }
 
+#include "../metrics/prometheus.h"
 #include "../quality/quality_evaluator.h"
 
 namespace srtla::protocol {
@@ -88,10 +89,14 @@ int SRTLAHandler::process_packets(time_t ts) {
         return 0;
     }
 
+    metrics::inc(metrics::RECV_BATCHES);
+
     // Process each received packet
     for (int i = 0; i < num_msgs; i++) {
         int len = static_cast<int>(msgs[i].msg_len);
         if (len > 0) {
+            metrics::inc(metrics::PACKETS_RECEIVED);
+            metrics::inc(metrics::BYTES_RECEIVED, static_cast<uint64_t>(len));
             process_single_packet(bufs[i], len, &addrs[i], ts);
         }
     }
@@ -124,6 +129,7 @@ void SRTLAHandler::process_single_packet(const char *buf, int n,
 
     if (conn->recovery_start() == 0 && was_timed_out) {
         conn->set_recovery_start(ts);
+        metrics::inc(metrics::RECOVERY_STARTED);
         spdlog::info("[{}:{}] [Group: {}] Connection is recovering",
                      print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                      port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
@@ -147,6 +153,7 @@ void SRTLAHandler::process_single_packet(const char *buf, int n,
 
     if (is_srt_nak_packet(buf, n)) {
         if (is_duplicate_nak(group, buf, n)) {
+            metrics::inc(metrics::NAKS_SUPPRESSED);
             spdlog::info("[{}:{}] [Group: {}] Duplicate NAK packet suppressed",
                          print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                          port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
@@ -154,6 +161,7 @@ void SRTLAHandler::process_single_packet(const char *buf, int n,
             return;
         }
 
+        metrics::inc(metrics::NAKS_RECEIVED);
         metrics_.on_nak_detected(conn, 1);
         spdlog::info("[{}:{}] [Group: {}] Received NAK packet. Total loss: {}",
                      print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
@@ -184,6 +192,7 @@ void SRTLAHandler::send_keepalive(const ConnectionPtr &conn, time_t ts) {
     int ret = pad_sendto(srtla_socket_, &pkt, sizeof(pkt), 0,
                      reinterpret_cast<const struct sockaddr *>(&conn->address()), kAddrLen);
     if (ret != sizeof(pkt)) {
+        metrics::inc(metrics::SEND_ERR_KEEPALIVE);
         spdlog::error("[{}:{}] Failed to send keepalive packet",
                       print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                       port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))));
@@ -202,6 +211,7 @@ int SRTLAHandler::register_group(const struct sockaddr_storage *addr, const char
         uint16_t header = htobe16(SRTLA_TYPE_REG_ERR);
         pad_sendto(srtla_socket_, &header, sizeof(header), 0,
                reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
+        metrics::inc(metrics::GROUP_REG_THROTTLED);
         spdlog::warn("[{}:{}] Group registration refused: source throttled for repeated auth failures",
                      print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                      port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))));
@@ -217,6 +227,7 @@ int SRTLAHandler::register_group(const struct sockaddr_storage *addr, const char
         uint16_t header = htobe16(SRTLA_TYPE_REG_ERR);
         pad_sendto(srtla_socket_, &header, sizeof(header), 0,
                reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
+        metrics::inc(metrics::GROUP_REG_TABLE_FULL);
         spdlog::error("[{}:{}] Group registration failed: Max groups reached",
                       print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                       port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))));
@@ -230,6 +241,7 @@ int SRTLAHandler::register_group(const struct sockaddr_storage *addr, const char
         uint16_t header = htobe16(SRTLA_TYPE_REG_ERR);
         pad_sendto(srtla_socket_, &header, sizeof(header), 0,
                reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
+        metrics::inc(metrics::GROUP_REG_DUP_ADDR);
         spdlog::error("[{}:{}] Group registration failed: Remote address already registered",
                       print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                       port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))));
@@ -248,6 +260,7 @@ int SRTLAHandler::register_group(const struct sockaddr_storage *addr, const char
     int ret = pad_sendto(srtla_socket_, &out_buf, sizeof(out_buf), 0,
                      reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
     if (ret != sizeof(out_buf)) {
+        metrics::inc(metrics::GROUP_REG_SEND_ERROR);
         spdlog::error("[{}:{}] Group registration failed: Send error",
                       print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                       port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))));
@@ -255,6 +268,7 @@ int SRTLAHandler::register_group(const struct sockaddr_storage *addr, const char
     }
 
     registry_.add_group(group);
+    metrics::inc(metrics::GROUP_REGISTRATIONS);
     spdlog::info("[{}:{}] [Group: {}] Group registered",
                  print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                  port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
@@ -269,6 +283,7 @@ int SRTLAHandler::register_connection(const struct sockaddr_storage *addr, const
         uint16_t header = htobe16(SRTLA_TYPE_REG_NGP);
         pad_sendto(srtla_socket_, &header, sizeof(header), 0,
                reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
+        metrics::inc(metrics::CONN_REG_NO_GROUP);
         spdlog::error("[{}:{}] Connection registration failed: No group found",
                       print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                       port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))));
@@ -282,6 +297,7 @@ int SRTLAHandler::register_connection(const struct sockaddr_storage *addr, const
         uint16_t header = htobe16(SRTLA_TYPE_REG_ERR);
         pad_sendto(srtla_socket_, &header, sizeof(header), 0,
                reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
+        metrics::inc(metrics::CONN_REG_GROUP_MISMATCH);
         spdlog::error("[{}:{}] [Group: {}] Connection registration failed: Provided group ID mismatch",
                       print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                       port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
@@ -295,6 +311,7 @@ int SRTLAHandler::register_connection(const struct sockaddr_storage *addr, const
             uint16_t header = htobe16(SRTLA_TYPE_REG_ERR);
             pad_sendto(srtla_socket_, &header, sizeof(header), 0,
                    reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
+            metrics::inc(metrics::CONN_REG_MAX_CONNS);
             spdlog::error("[{}:{}] [Group: {}] Connection registration failed: Max group conns reached",
                           print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                           port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
@@ -310,6 +327,7 @@ int SRTLAHandler::register_connection(const struct sockaddr_storage *addr, const
     int ret = pad_sendto(srtla_socket_, &header, sizeof(header), 0,
                      reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
     if (ret != sizeof(header)) {
+        metrics::inc(metrics::CONN_REG_SEND_ERROR);
         spdlog::error("[{}:{}] [Group: {}] Connection registration failed: Socket send error",
                       print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                       port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
@@ -323,6 +341,7 @@ int SRTLAHandler::register_connection(const struct sockaddr_storage *addr, const
     group->write_socket_info_file();
     group->set_last_address(*addr);
 
+    metrics::inc(metrics::CONN_REGISTRATIONS);
     spdlog::info("[{}:{}] [Group: {}] Connection registration",
                  print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                  port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
@@ -349,6 +368,7 @@ void SRTLAHandler::register_packet(ConnectionGroupPtr group,
         int ret = pad_sendto(srtla_socket_, &ack, sizeof(ack), 0,
                          reinterpret_cast<const struct sockaddr *>(&conn->address()), kAddrLen);
         if (ret != sizeof(ack)) {
+            metrics::inc(metrics::SEND_ERR_ACK);
             spdlog::error("[{}:{}] [Group: {}] Failed to send the SRTLA ACK",
                           print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                           port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
@@ -480,6 +500,7 @@ void SRTLAHandler::handle_keepalive(ConnectionGroupPtr group,
     int ret = pad_sendto(srtla_socket_, buffer, length, 0,
                      reinterpret_cast<const struct sockaddr *>(addr), kAddrLen);
     if (ret != length) {
+        metrics::inc(metrics::SEND_ERR_KEEPALIVE);
         spdlog::error("[{}:{}] [Group: {}] Failed to send SRTLA Keepalive",
                       print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),
                       port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(addr))),

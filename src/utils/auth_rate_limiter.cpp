@@ -4,6 +4,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "../metrics/prometheus.h"
 #include "../receiver_config.h"
 
 namespace srtla::utils {
@@ -21,6 +22,7 @@ std::string AuthRateLimiter::key_for(const struct sockaddr_storage &addr) {
 }
 
 void AuthRateLimiter::record_failure(const struct sockaddr_storage &addr, time_t now) {
+    metrics::inc(metrics::AUTH_FAILURES);
     auto &entry = entries_[key_for(addr)];
 
     if (entry.window_start == 0 || (now - entry.window_start) > AUTH_FAIL_WINDOW) {
@@ -44,6 +46,16 @@ bool AuthRateLimiter::is_blocked(const struct sockaddr_storage &addr, time_t now
         return false;
     }
     return it->second.blocked_until > now;
+}
+
+std::size_t AuthRateLimiter::blocked_count(time_t now) const {
+    std::size_t count = 0;
+    for (const auto &entry : entries_) {
+        if (entry.second.blocked_until > now) {
+            count++;
+        }
+    }
+    return count;
 }
 
 void AuthRateLimiter::cleanup(time_t now) {

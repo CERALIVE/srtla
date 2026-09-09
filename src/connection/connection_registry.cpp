@@ -4,6 +4,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "../metrics/prometheus.h"
 #include "../receiver_config.h"
 #include "../utils/network_utils.h"
 
@@ -69,6 +70,7 @@ bool ConnectionRegistry::evict_oldest_pending_group() {
         return false;
     }
 
+    metrics::inc(metrics::GROUPS_REMOVED_EVICTED);
     spdlog::warn("[Group: {}] Evicting pending group to admit new registration (group table full)",
                  static_cast<void *>(oldest.get()));
     remove_group(oldest);
@@ -142,6 +144,7 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
                                      print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                                      port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                                      static_cast<void *>(group.get()));
+                        metrics::inc(metrics::RECOVERY_COMPLETED);
                         conn->set_recovery_start(0);
                     }
                 } else if ((conn->recovery_start() + RECOVERY_CHANCE_PERIOD) < current_time) {
@@ -149,6 +152,7 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
                                  print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                                  port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                                  static_cast<void *>(group.get()));
+                    metrics::inc(metrics::RECOVERY_FAILED);
                     conn->set_recovery_start(0);
                 }
             }
@@ -156,6 +160,7 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
             if (conn_timed_out(conn, current_time)) {
                 conn_it = connections.erase(conn_it);
                 removed_connections++;
+                metrics::inc(metrics::CONNECTIONS_REMOVED);
                 spdlog::info("[{}:{}] [Group: {}] Connection removed (timed out)",
                              print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
                              port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&conn->address()))),
@@ -172,6 +177,7 @@ void ConnectionRegistry::cleanup_inactive(time_t current_time,
         if (connections.empty() && (group->created_at() + empty_timeout) < current_time) {
             group_it = groups_.erase(group_it);
             removed_groups++;
+            metrics::inc(metrics::GROUPS_REMOVED_IDLE);
             spdlog::info("[Group: {}] Group removed (no connections)", static_cast<void *>(group.get()));
         } else {
             if (before_conns != connections.size()) {

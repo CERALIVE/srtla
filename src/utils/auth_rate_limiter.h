@@ -21,6 +21,8 @@ public:
     void record_failure(const struct sockaddr_storage &addr, time_t now);
     bool is_blocked(const struct sockaddr_storage &addr, time_t now) const;
 
+    std::size_t blocked_count(time_t now) const;
+
     // Drops stale entries; call periodically from the cleanup loop.
     void cleanup(time_t now);
 

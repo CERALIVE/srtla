@@ -19,8 +19,9 @@ add_library(common_obj OBJECT
     src/common.c
     src/common.h)
 
-add_executable(srtla_rec
-    src/receiver_main.cpp
+# Everything the receiver is made of except its main(), so the test targets can
+# link the same objects.
+add_library(rec_obj OBJECT
     src/connection/connection.cpp
     src/connection/connection_group.cpp
     src/connection/connection_registry.cpp
@@ -29,21 +30,31 @@ add_executable(srtla_rec
     src/quality/load_balancer.cpp
     src/protocol/srtla_handler.cpp
     src/protocol/srt_handler.cpp
+    src/metrics/prometheus.cpp
     src/utils/network_utils.cpp
     src/utils/nak_dedup.cpp
     src/utils/auth_rate_limiter.cpp)
- 
-target_include_directories(srtla_rec PRIVATE
+
+target_include_directories(rec_obj PUBLIC
     "deps/argparse/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(rec_obj PUBLIC spdlog::spdlog)
+target_compile_features(rec_obj PUBLIC cxx_std_17)
+target_compile_definitions(rec_obj PUBLIC VERSION="${CMAKE_PROJECT_VERSION}")
+
+add_executable(srtla_rec src/receiver_main.cpp)
 
 target_link_libraries(srtla_rec PRIVATE
+    rec_obj
     common_obj
     spdlog::spdlog
 )
 target_compile_features(srtla_rec PRIVATE cxx_std_17)
 #target_compile_options(srtla_rec PRIVATE -Wall -Wextra)
-target_compile_definitions(srtla_rec PUBLIC VERSION="${CMAKE_PROJECT_VERSION}")
+
+add_executable(test_metrics src/metrics/test_metrics.cpp)
+target_link_libraries(test_metrics PRIVATE rec_obj common_obj spdlog::spdlog)
+target_compile_options(test_metrics PRIVATE -UNDEBUG) # the checks are assert()s
 
 add_executable(srtla_send
     src/sender.cpp

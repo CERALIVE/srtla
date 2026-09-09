@@ -41,6 +41,10 @@ void SRTHandler::handle_srt_data(connection::ConnectionGroupPtr group) {
 
     char buf[MTU];
     int n = recv(group->srt_socket(), buf, MTU, 0);
+    if (n >= SRT_MIN_LEN) {
+        metrics::inc(metrics::SRT_PACKETS_RECEIVED);
+        metrics::inc(metrics::SRT_BYTES_RECEIVED, static_cast<uint64_t>(n));
+    }
     if (n < SRT_MIN_LEN) {
         spdlog::error("[Group: {}] Failed to read the SRT sock, terminating the group",
                       static_cast<void *>(group.get()));
@@ -105,8 +109,10 @@ void SRTHandler::handle_srt_data(connection::ConnectionGroupPtr group) {
 
         int sent = sendmmsg(srtla_socket_, msgs, static_cast<unsigned int>(msg_count), 0);
         if (sent < 0) {
+            metrics::inc(metrics::SEND_ERR_DOWNSTREAM, msg_count);
             spdlog::error("[Group: {}] sendmmsg failed: {}", static_cast<void *>(group.get()), strerror(errno));
         } else if (static_cast<size_t>(sent) < msg_count) {
+            metrics::inc(metrics::SEND_ERR_DOWNSTREAM, msg_count - static_cast<size_t>(sent));
             spdlog::warn("[Group: {}] sendmmsg sent only {}/{} messages",
                          static_cast<void *>(group.get()), sent, msg_count);
         }
@@ -114,6 +120,7 @@ void SRTHandler::handle_srt_data(connection::ConnectionGroupPtr group) {
         int ret = pad_sendto(srtla_socket_, &buf, n, 0,
                          reinterpret_cast<const struct sockaddr *>(&group->last_address()), sizeof(struct sockaddr_storage));
         if (ret != n) {
+            metrics::inc(metrics::SEND_ERR_DOWNSTREAM);
             spdlog::error("[{}:{}] [Group: {}] Failed to send SRT packet",
                           print_addr(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&group->last_address()))),
                           port_no(const_cast<struct sockaddr *>(reinterpret_cast<const struct sockaddr *>(&group->last_address()))),
@@ -130,7 +137,7 @@ void SRTHandler::handle_srt_data(connection::ConnectionGroupPtr group) {
         // the group count shrinks.
         spdlog::info("[Group: {}] Tearing down failed-auth group",
                      static_cast<void *>(group.get()));
-        remove_group(group);
+        remove_group(group, metrics::GROUPS_REMOVED_AUTH);
     }
 }
 
@@ -141,11 +148,14 @@ bool SRTHandler::forward_to_srt_server(connection::ConnectionGroupPtr group, con
 
     int ret = send(group->srt_socket(), buffer, length, 0);
     if (ret != length) {
+        metrics::inc(metrics::FORWARD_ERRORS);
         spdlog::error("[Group: {}] Failed to forward SRTLA packet, terminating the group",
                       static_cast<void *>(group.get()));
         remove_group(group);
         return false;
     }
+    metrics::inc(metrics::FORWARDED_PACKETS);
+    metrics::inc(metrics::FORWARDED_BYTES, static_cast<uint64_t>(length));
     return true;
 }
 
@@ -215,7 +225,8 @@ bool SRTHandler::ensure_group_socket(connection::ConnectionGroupPtr group) {
     return true;
 }
 
-void SRTHandler::remove_group(connection::ConnectionGroupPtr group) {
+void SRTHandler::remove_group(connection::ConnectionGroupPtr group, metrics::Counter reason) {
+    metrics::inc(reason);
     registry_.remove_group(group);
 }
 
