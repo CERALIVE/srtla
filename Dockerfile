@@ -25,6 +25,8 @@ RUN mkdir build && cd build && \
     make
 
 EXPOSE 5000/udp
+# The metrics endpoint binds to 127.0.0.1 by default, so it needs
+# --metrics_bind :: to be reachable from outside the container.
 EXPOSE 9997/tcp
 
 # Set the entry point for the container

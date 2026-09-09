@@ -4,6 +4,7 @@
 #include <cstring>
 #include <ctime>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -138,7 +139,7 @@ Exporter::~Exporter() {
     }
 }
 
-bool Exporter::start(uint16_t port, int epoll_fd, bool detailed) {
+bool Exporter::start(const std::string &bind_addr, uint16_t port, int epoll_fd, bool detailed) {
     detailed_ = detailed;
     // Wall clock, not get_seconds(): the exposition convention is a unix
     // timestamp, and get_seconds() returns CLOCK_MONOTONIC_COARSE.
@@ -148,33 +149,50 @@ bool Exporter::start(uint16_t port, int epoll_fd, bool detailed) {
         return false;
     }
 
-    int fd = socket(AF_INET6, SOCK_STREAM, 0);
-    if (fd < 0) {
-        spdlog::error("Metrics: socket creation failed: {}", strerror(errno));
+    // AI_NUMERICHOST: this is a bind address, not a host to look up, so a typo
+    // fails here rather than resolving to an interface nobody intended.
+    struct addrinfo hints {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE | AI_NUMERICHOST;
+
+    struct addrinfo *res = nullptr;
+    int gai = getaddrinfo(bind_addr.c_str(), std::to_string(port).c_str(), &hints, &res);
+    if (gai != 0) {
+        spdlog::error("Metrics: --metrics_bind '{}' is not a numeric address: {}", bind_addr,
+                      gai_strerror(gai));
         return false;
     }
 
-    int off = 0;
-    int on = 1;
-    setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    int fd = socket(res->ai_family, SOCK_STREAM, 0);
+    if (fd < 0) {
+        spdlog::error("Metrics: socket creation failed: {}", strerror(errno));
+        freeaddrinfo(res);
+        return false;
+    }
 
-    struct sockaddr_in6 addr {};
-    addr.sin6_family = AF_INET6;
-    addr.sin6_addr = in6addr_any;
-    addr.sin6_port = htons(port);
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    if (res->ai_family == AF_INET6) {
+        int off = 0;
+        // So :: covers v4 clients too, matching the SRTLA socket.
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
+    }
 
     int flags = fcntl(fd, F_GETFL, 0);
-    if (bind(fd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) != 0 ||
-        listen(fd, 8) != 0 || flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1 ||
-        utils::NetworkUtils::epoll_add(epoll_fd, fd, EPOLLIN, this) != 0) {
-        spdlog::error("Metrics: failed to listen on port {}: {}", port, strerror(errno));
+    bool ok = bind(fd, res->ai_addr, res->ai_addrlen) == 0 && listen(fd, 8) == 0 && flags != -1 &&
+              fcntl(fd, F_SETFL, flags | O_NONBLOCK) != -1 &&
+              utils::NetworkUtils::epoll_add(epoll_fd, fd, EPOLLIN, this) == 0;
+    freeaddrinfo(res);
+
+    if (!ok) {
+        spdlog::error("Metrics: failed to listen on {}:{}: {}", bind_addr, port, strerror(errno));
         close(fd);
         return false;
     }
 
     listen_fd_ = fd;
-    spdlog::info("Metrics endpoint listening on :{} (per-connection metrics {})", port,
+    spdlog::info("Metrics endpoint listening on {}:{} (per-connection metrics {})", bind_addr, port,
                  detailed_ ? "enabled" : "disabled");
     return true;
 }

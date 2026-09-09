@@ -30,7 +30,7 @@ int main() {
     connection::ConnectionRegistry registry;
     utils::AuthRateLimiter rate_limiter;
     metrics::Exporter exporter(registry, rate_limiter);
-    exporter.start(0, -1, /*detailed=*/false); // port 0: no listener, tier 1 only
+    exporter.start("127.0.0.1", 0, -1, /*detailed=*/false); // port 0: no listener, tier 1 only
 
     // Counters exist at zero before anything happens, so rate() has a baseline.
     std::string body = exporter.render(1000);
@@ -68,7 +68,7 @@ int main() {
     assert(has(body, "\nsrtla_connections 1\n"));
     assert(!has(body, "srtla_conn_bytes_received_total")); // tier 2 is off
 
-    exporter.start(0, -1, /*detailed=*/true);
+    exporter.start("127.0.0.1", 0, -1, /*detailed=*/true);
     body = exporter.render(1000);
     assert(has(body, "srtla_conn_bytes_received_total{group=\"0\",remote=\"10.0.0.7:5000\"} 4242\n"));
     assert(has(body, "srtla_conn_rtt_ms{group=\"0\",remote=\"10.0.0.7:5000\"} 31\n"));

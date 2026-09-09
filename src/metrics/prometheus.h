@@ -55,8 +55,8 @@ public:
     ~Exporter();
 
     // Binds the scrape listener and hands it to the main epoll loop. Port 0
-    // disables the exporter entirely.
-    bool start(uint16_t port, int epoll_fd, bool detailed);
+    // disables the exporter entirely. bind_addr must be numeric.
+    bool start(const std::string &bind_addr, uint16_t port, int epoll_fd, bool detailed);
 
     // Serves every scrape pending on the listener. Called when the main loop
     // sees an event tagged with this object.

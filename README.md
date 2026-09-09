@@ -60,6 +60,7 @@ srtla_rec runs as a proxy between SRTla clients and an SRT server:
 - `--verbose`: Enable verbose logging (default: disabled)
 - `--debug`: Enable debug logging (default: disabled)
 - `--metrics_port PORT`: Serve Prometheus metrics over HTTP on this port (default: 0, disabled)
+- `--metrics_bind ADDR`: Numeric address the metrics endpoint binds to (default: 127.0.0.1)
 - `--metrics_detail`: Also export per-connection metrics (default: disabled)
 
 ### Example
@@ -200,20 +201,24 @@ The sender should implement congestion control using adaptive bitrate based on t
 
 ## Monitoring
 
-With `--metrics_port 9997`, srtla_rec serves Prometheus text exposition over HTTP on that port (any path):
+`--metrics_port` serves Prometheus text exposition over HTTP. Every path returns the same body.
 
 ```bash
-./srtla_rec --metrics_port 9997 [--metrics_detail]
+./srtla_rec --metrics_port 9997
 curl http://127.0.0.1:9997/metrics
 ```
 
-The endpoint is served from the main epoll loop, so there is no extra thread and no locking. Bind it behind a firewall — there is no authentication.
+The main epoll loop answers the scrape, so this costs no extra thread and takes no locks.
 
-Always exported: traffic counters (`srtla_packets_received_total`, `srtla_forwarded_packets_total`, `srtla_srt_packets_received_total`, …), registration outcomes (`srtla_group_registrations_total`, `srtla_group_registrations_rejected_total{reason}`), teardowns (`srtla_groups_removed_total{reason}`), auth throttling (`srtla_auth_failures_total`, `srtla_auth_sources_blocked`), NAK handling, connection recovery, send errors, and live gauges for groups and connections. `srtla_packets_received_total / srtla_recv_batches_total` is the receive-loop fill ratio — a rising value means the loop is approaching saturation.
+The endpoint listens on `127.0.0.1` by default because nothing authenticates it. `--metrics_bind ::` binds every interface for both IPv4 and IPv6, which is what a container needs, and `--metrics_bind 0.0.0.0` binds IPv4 only. Put a firewall in front of either one. The address has to be numeric: `--metrics_bind localhost` logs an error at startup and leaves the endpoint off while the receiver keeps running.
 
-A Grafana dashboard covering every exported metric ships in [`docs/grafana-dashboard.json`](docs/grafana-dashboard.json) — import it and select your Prometheus data source. The per-connection panels sit in a collapsed row at the bottom and stay empty unless `--metrics_detail` is on.
+Always exported: traffic counters (`srtla_packets_received_total`, `srtla_forwarded_packets_total`, `srtla_srt_packets_received_total` and others), registration outcomes (`srtla_group_registrations_total`, `srtla_group_registrations_rejected_total{reason}`), teardowns (`srtla_groups_removed_total{reason}`), auth throttling (`srtla_auth_failures_total`, `srtla_auth_sources_blocked`), NAK handling, connection recovery, send errors, and live gauges for groups and connections.
 
-`--metrics_detail` adds per-connection series (`srtla_conn_*`: bytes, packets, loss, weight, error points, RTT, window, in-flight, sender bitrate, idle time) labelled `group` (the group's local SRT port) and `remote` (the client address). This is the useful view for debugging bonding, but each reconnect produces a new `remote` label value, so keep an eye on series cardinality before enabling it on a busy receiver.
+Divide `srtla_packets_received_total` by `srtla_recv_batches_total` for the receive loop fill ratio. A climbing ratio means `recvmmsg()` is returning fuller batches as the loop approaches saturation. That is the first number worth checking when a receiver feels slow.
+
+`--metrics_detail` adds per-connection series (`srtla_conn_*`: bytes, packets, loss, weight, error points, RTT, window, in-flight, sender bitrate, idle time) labelled `group`, the group's local SRT port, and `remote`, the client address. These are what explain bonding behavior instead of just reporting it. Every reconnect creates a new `remote` label value, so watch series cardinality before enabling this on a busy receiver.
+
+`docs/grafana-dashboard.json` covers every exported metric across 20 panels. Import it and pick your Prometheus data source. The per-connection panels sit in a collapsed row at the bottom and stay empty unless `--metrics_detail` is on.
 
 ## Socket Information
 
