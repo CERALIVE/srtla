@@ -202,7 +202,9 @@ void Exporter::handle_event() {
     bool rendered = false;
 
     while (true) {
-        int client = accept(listen_fd_, nullptr, nullptr);
+        // SOCK_NONBLOCK: an accepted socket does not inherit it from the
+        // listener, and nothing a scraper does may stall the media loop.
+        int client = accept4(listen_fd_, nullptr, nullptr, SOCK_NONBLOCK);
         if (client < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                 spdlog::warn("Metrics: accept failed: {}", strerror(errno));
@@ -217,21 +219,21 @@ void Exporter::handle_event() {
             rendered = true;
         }
 
-        // ponytail: the scrape is served inline on the media loop with a 100ms
-        // socket timeout, so a stalled scraper can delay packet handling by up
-        // to that much. Move to a non-blocking write state machine in epoll if
-        // that ever shows up in the latency.
-        struct timeval tv { 0, 100 * 1000 };
-        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
+        // One read, and only so the request is out of the receive buffer
+        // before close(). Every path serves the same body, so the contents do
+        // not matter, and looping until EAGAIN would hand a client that keeps
+        // sending an unbounded share of this loop.
         char req[512];
-        recv(client, req, sizeof(req), 0); // drained and ignored: any path serves metrics
+        recv(client, req, sizeof(req), 0);
 
         std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4\r\n"
                                "Content-Length: " + std::to_string(body.size()) +
                                "\r\nConnection: close\r\n\r\n" + body;
 
+        // One non-blocking pass. The exposition is a few tens of KB against a
+        // socket buffer measured in MB, so a scraper that reads its response
+        // gets all of it. A client that stops reading gets a truncated body
+        // and a closed socket instead of a share of the media loop.
         size_t sent = 0;
         while (sent < response.size()) {
             ssize_t ret = send(client, response.data() + sent, response.size() - sent, MSG_NOSIGNAL);
@@ -239,7 +241,8 @@ void Exporter::handle_event() {
                 if (errno == EINTR) {
                     continue;
                 }
-                spdlog::warn("Metrics: scrape response truncated: {}", strerror(errno));
+                spdlog::debug("Metrics: scrape response truncated at {}/{} bytes: {}", sent,
+                              response.size(), strerror(errno));
                 break;
             }
             sent += static_cast<size_t>(ret);
