@@ -3,7 +3,7 @@ name: Publish Docker image
 on:
   push:
     branches:
-      - next
+      - main
   workflow_dispatch:
 
 jobs:
@@ -13,9 +13,21 @@ jobs:
       contents: read
       packages: write
 
+    # Defaults publish to GHCR under this repository's own name. To push
+    # elsewhere, set REGISTRY_URL (and optionally IMAGE_NAME) as a repository
+    # variable or secret, plus the REGISTRY_USERNAME / REGISTRY_PASSWORD
+    # secrets.
+    env:
+      REGISTRY: ${{ vars.REGISTRY_URL || secrets.REGISTRY_URL || 'ghcr.io' }}
+      IMAGE_NAME: ${{ vars.IMAGE_NAME || github.repository }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve image reference
+        # Docker refs must be lowercase; org and repo names need not be.
+        run: echo "IMAGE=$(echo "$REGISTRY/$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -23,9 +35,9 @@ jobs:
       - name: Log in to registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ secrets.REGISTRY_URL }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
         uses: docker/build-push-action@v5
@@ -33,7 +45,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ secrets.REGISTRY_URL }}/arv-live/srtla:latest
-            ${{ secrets.REGISTRY_URL }}/arv-live/srtla:${{ github.sha }}
-          cache-from: type=registry,ref=${{ secrets.REGISTRY_URL }}/arv-live/srtla:buildcache
-          cache-to: type=registry,ref=${{ secrets.REGISTRY_URL }}/arv-live/srtla:buildcache,mode=max
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
