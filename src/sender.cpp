@@ -177,8 +177,12 @@ conn_t *select_conn() {
     }
   }
 
+  /* NOT assert(get_seconds(&t) == 0): release builds define NDEBUG, which
+     deletes the whole expression including the call, leaving `t` an
+     uninitialized stack read. */
   time_t t;
-  assert(get_seconds(&t) == 0);
+  if (get_seconds(&t) != 0)
+    return NULL;
 
   for (conn_t *c = conns; c != NULL; c = c->next) {
     /* If we have some very slow links, we may be better off ignoring them
@@ -598,8 +602,12 @@ void connection_housekeeping() {
      resending a second REG2 very soon after the first one, depending
      on when the first execution happens within the seconds interval */
   static uint64_t last_ran = 0;
+  /* NOT assert(get_ms(&ms) == 0): release builds define NDEBUG, which deletes
+     the whole expression including the call, leaving `ms` an uninitialized
+     stack read that makes this function return early forever. */
   uint64_t ms;
-  assert(get_ms(&ms) == 0);
+  if (get_ms(&ms) != 0)
+    return;
   if ((last_ran + HOUSEKEEPING_INT) > ms)
     return;
 
