@@ -8,6 +8,7 @@
 //   {"bytes_received": N, "first_byte_ms": M, "disconnects": D, "duration_ms": T,
 //    "ts_packets": P, "ts_sync_errors": S, "ts_cc_errors": C,
 //    "pkt_rcv_loss": L, "pkt_rcv_drop": D2, "pkt_retrans": R,
+//    "pkt_rcv_total": RT, "pkt_rcv_unique": U,
 //    "packetfilter": "<negotiated SRTO_PACKETFILTER on the accepted socket>",
 //    "nakreport_readback": NR, "lossmaxttl_readback": LT,
 //    "reorderfreeze_readback": RF, "periodicnakgate_readback": PG}
@@ -20,9 +21,17 @@
 //   ts_sync_errors  TS packets whose sync byte != 0x47
 //   ts_cc_errors    per-PID continuity-counter discontinuities (excludes null
 //                   PID 0x1FFF and the adaptation-field discontinuity_indicator)
-//   pkt_rcv_loss    SRT srt_bstats pktRcvLossTotal (cumulative, summed/conn)
-//   pkt_rcv_drop    SRT srt_bstats pktRcvDropTotal (too-late-to-play drops)
+//   pkt_rcv_loss    SRT srt_bstats pktRcvLossTotal (cumulative, summed/conn;
+//                   "ever presently missing" — includes gaps later recovered)
+//   pkt_rcv_drop    SRT srt_bstats pktRcvDropTotal (packets NOT delivered to the
+//                   app: never-arrived, too-late, or undecryptable — the viewer's
+//                   observed loss)
 //   pkt_retrans     SRT srt_bstats pktRetransTotal (retransmitted packets)
+//   pkt_rcv_total   SRT srt_bstats pktRecvTotal (all received DATA packets,
+//                   retransmissions included; pkt_rcv_total - pkt_rcv_unique is
+//                   the receiver-observed retransmission/repeat count)
+//   pkt_rcv_unique  SRT srt_bstats pktRecvUniqueTotal (unique packets delivered
+//                   to the app — the denominator companion to pkt_rcv_drop)
 //   packetfilter    the SRTO_PACKETFILTER value negotiated on the accepted data
 //                   socket (read after srt_accept). Empty when no filter is in
 //                   effect for the connection. With --packetfilter set, this is
@@ -109,6 +118,8 @@ struct Result {
   uint64_t pkt_rcv_loss = 0;
   uint64_t pkt_rcv_drop = 0;
   uint64_t pkt_retrans = 0;
+  uint64_t pkt_rcv_total = 0;
+  uint64_t pkt_rcv_unique = 0;
   std::string packetfilter;
   // Negotiated policy read off the accepted socket (srt_getsockflag), NOT the
   // requested values the banner echoes. -1 = the option could not be read (e.g.
@@ -242,6 +253,7 @@ bool write_result(const std::string &path, const Result &r) {
                ", \"ts_packets\": %" PRIu64 ", \"ts_sync_errors\": %" PRIu64
                ", \"ts_cc_errors\": %" PRIu64 ", \"pkt_rcv_loss\": %" PRIu64
                ", \"pkt_rcv_drop\": %" PRIu64 ", \"pkt_retrans\": %" PRIu64
+               ", \"pkt_rcv_total\": %" PRIu64 ", \"pkt_rcv_unique\": %" PRIu64
                ", \"packetfilter\": \"%s\""
                ", \"nakreport_readback\": %d, \"lossmaxttl_readback\": %d"
                ", \"reorderfreeze_readback\": %d"
@@ -249,7 +261,8 @@ bool write_result(const std::string &path, const Result &r) {
                "}\n",
                r.bytes_received, r.first_byte_ms, r.disconnects, r.duration_ms,
                r.ts_packets, r.ts_sync_errors, r.ts_cc_errors, r.pkt_rcv_loss,
-               r.pkt_rcv_drop, r.pkt_retrans, r.packetfilter.c_str(),
+               r.pkt_rcv_drop, r.pkt_retrans, r.pkt_rcv_total, r.pkt_rcv_unique,
+               r.packetfilter.c_str(),
                r.nakreport_readback, r.lossmaxttl_readback,
                r.reorderfreeze_readback, r.periodicnakgate_readback);
   std::fflush(f);
@@ -293,6 +306,8 @@ int main(int argc, char **argv) {
     res.pkt_rcv_loss += nn(perf.pktRcvLossTotal);
     res.pkt_rcv_drop += nn(perf.pktRcvDropTotal);
     res.pkt_retrans += nn(perf.pktRetransTotal);
+    res.pkt_rcv_total += nn(perf.pktRecvTotal);
+    res.pkt_rcv_unique += nn(perf.pktRecvUniqueTotal);
   };
 
   // Copy the live TS counters into res and write the JSON. Used by the
