@@ -1,0 +1,50 @@
+{
+  "scenario": "ab-periodic-nak",
+  "arm_a": "periodicnakgate=1",
+  "arm_b": "periodicnakgate=2",
+  "rule_sha256": "3afffaf6743175a065855d4216791d82afc5a0612c30db84f251a63932d49fea",
+  "n": 3,
+  "cells": 4,
+  "winner": 2,
+  "cells_won_by_a": 1,
+  "goodput_guard_all_cells": true,
+  "reason": "A won loss_pp on 1/4 cells with the goodput guard holding",
+  "groups": [
+    {
+      "id": "loss0.5-reorder10",
+      "median_loss_pp_a": 0.43,
+      "median_loss_pp_b": 0.501,
+      "median_goodput_kbps_a": 708.0,
+      "median_goodput_kbps_b": 707.0,
+      "a_wins": false,
+      "goodput_guard_ok": true
+    },
+    {
+      "id": "loss0.5-reorder25",
+      "median_loss_pp_a": 0.395,
+      "median_loss_pp_b": 0.429,
+      "median_goodput_kbps_a": 709.0,
+      "median_goodput_kbps_b": 707.0,
+      "a_wins": false,
+      "goodput_guard_ok": true
+    },
+    {
+      "id": "loss2-reorder10",
+      "median_loss_pp_a": 1.831,
+      "median_loss_pp_b": 1.636,
+      "median_goodput_kbps_a": 697.0,
+      "median_goodput_kbps_b": 678.0,
+      "a_wins": false,
+      "goodput_guard_ok": true
+    },
+    {
+      "id": "loss2-reorder25",
+      "median_loss_pp_a": 1.79,
+      "median_loss_pp_b": 1.942,
+      "median_goodput_kbps_a": 699.0,
+      "median_goodput_kbps_b": 698.0,
+      "a_wins": true,
+      "goodput_guard_ok": true
+    }
+  ]
+}

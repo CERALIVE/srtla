@@ -1,0 +1,14 @@
+campaign=ab-periodic-nak
+instrument=tests/compat/scenarios/reorder-stress.sh
+build_dir=/mnt/development/ceralive/srtla/build
+sink_lib=/mnt/development/ceralive/srtla/test-results/libsrt-matrix/install/patched/lib
+sender_bin=/tmp/sender-v4.1.0/extract/usr/bin/srtla_send sha256=6ae3aca874ea24d41cab7596b17c7e26daf72afadb932a73edbafb35ee1b741d
+sink_image=sls-hf:9dd6cdb
+sink_image_sha256=sha256:24827eaa209ad206fcbc3c9447f4888c813420d34d7e9ab80c2b4e11ac670c6d
+duration_s=14
+netem_seed=20260920
+lock=/home/andres/.cache/opencode/tmp/ab-campaign-ffab3e4a4b0d-ab-periodic-nak.lock
+--- df -B1 ---
+Filesystem           1B-blocks          Used   Available Use% Mounted on
+/dev/mapper/root  484742127616  379020247040 81023148032  83% /
+/dev/nvme0n1p2   1354053271552 1270023069696 70245244928  95% /mnt/development

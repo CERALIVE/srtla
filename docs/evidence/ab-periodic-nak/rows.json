@@ -1,0 +1,218 @@
+[
+  {
+    "arm": "A",
+    "cell": "loss0.5-reorder10",
+    "run": 1,
+    "loss_pp": 0.43,
+    "goodput_kbps": 689,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss0.5-reorder10",
+    "run": 2,
+    "loss_pp": 0.609,
+    "goodput_kbps": 708,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss0.5-reorder10",
+    "run": 3,
+    "loss_pp": 0.358,
+    "goodput_kbps": 709,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss0.5-reorder25",
+    "run": 1,
+    "loss_pp": 0.466,
+    "goodput_kbps": 709,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss0.5-reorder25",
+    "run": 2,
+    "loss_pp": 0.393,
+    "goodput_kbps": 709,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss0.5-reorder25",
+    "run": 3,
+    "loss_pp": 0.395,
+    "goodput_kbps": 708,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss2-reorder10",
+    "run": 1,
+    "loss_pp": 1.655,
+    "goodput_kbps": 697,
+    "retransmit_ratio": 0.0004,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss2-reorder10",
+    "run": 2,
+    "loss_pp": 1.831,
+    "goodput_kbps": 698,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss2-reorder10",
+    "run": 3,
+    "loss_pp": 2.117,
+    "goodput_kbps": 678,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss2-reorder25",
+    "run": 1,
+    "loss_pp": 2.513,
+    "goodput_kbps": 693,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss2-reorder25",
+    "run": 2,
+    "loss_pp": 1.684,
+    "goodput_kbps": 700,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "A",
+    "cell": "loss2-reorder25",
+    "run": 3,
+    "loss_pp": 1.79,
+    "goodput_kbps": 699,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss0.5-reorder10",
+    "run": 1,
+    "loss_pp": 0.608,
+    "goodput_kbps": 707,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss0.5-reorder10",
+    "run": 2,
+    "loss_pp": 0.501,
+    "goodput_kbps": 707,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss0.5-reorder10",
+    "run": 3,
+    "loss_pp": 0.467,
+    "goodput_kbps": 705,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss0.5-reorder25",
+    "run": 1,
+    "loss_pp": 0.61,
+    "goodput_kbps": 707,
+    "retransmit_ratio": 0.0004,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss0.5-reorder25",
+    "run": 2,
+    "loss_pp": 0.323,
+    "goodput_kbps": 691,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss0.5-reorder25",
+    "run": 3,
+    "loss_pp": 0.429,
+    "goodput_kbps": 709,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss2-reorder10",
+    "run": 1,
+    "loss_pp": 1.933,
+    "goodput_kbps": 678,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss2-reorder10",
+    "run": 2,
+    "loss_pp": 1.292,
+    "goodput_kbps": 703,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss2-reorder10",
+    "run": 3,
+    "loss_pp": 1.636,
+    "goodput_kbps": 669,
+    "retransmit_ratio": 0.0004,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss2-reorder25",
+    "run": 1,
+    "loss_pp": 1.942,
+    "goodput_kbps": 695,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss2-reorder25",
+    "run": 2,
+    "loss_pp": 2.08,
+    "goodput_kbps": 698,
+    "retransmit_ratio": 0.0,
+    "valid": true
+  },
+  {
+    "arm": "B",
+    "cell": "loss2-reorder25",
+    "run": 3,
+    "loss_pp": 1.759,
+    "goodput_kbps": 699,
+    "retransmit_ratio": 0.0004,
+    "valid": true
+  }
+]
