@@ -1,0 +1,90 @@
+name: Build Check
+
+on:
+  push:
+    branches: [upstream/main]
+  pull_request:
+    branches: [upstream/main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake git ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ matrix.arch }}-gcc-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.arch }}-gcc-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
+
+      - name: Build srtla
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build -j"$(nproc)"
+
+      - name: Run tests
+        run: |
+          ctest --test-dir build --output-on-failure
+
+      - name: Verify binaries
+        run: |
+          ls -la build/srtla_send build/srtla_rec
+          file build/srtla_send build/srtla_rec
+
+      # The C srtla_send still BUILDS (upstream keeps the target) but must never
+      # be installed: the device-side sender is srtla-send-rs.
+      - name: Verify receiver-only install
+        run: |
+          cmake --install build --prefix "$PWD/install-check"
+          installed=$(cd install-check/bin && ls)
+          echo "installed: $installed"
+          test "$installed" = "srtla_rec"
+
+      - name: Build Summary
+        run: |
+          {
+            echo "## ✅ Build Check Passed"
+            echo ""
+            echo "**Architecture:** ${{ matrix.arch }}"
+            echo "**Runner:** ${{ matrix.runner }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi

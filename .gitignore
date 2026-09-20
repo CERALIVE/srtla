@@ -14,3 +14,6 @@ CMakeUserPresets.json
 irltk_srtla_rec
 srtla_rec
 srtla_send
+
+# CERALIVE: workflow-contract negative-test fixtures
+test-results/

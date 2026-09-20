@@ -1,0 +1,59 @@
+---
+# clang-tidy configuration for srtla
+# Static analysis checks for C/C++ code
+# Note: This project has both C (.c) and C++ (.cpp) files
+
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-casting-through-void,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-branch-clone,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  performance-*,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -readability-function-size,
+  -readability-identifier-length,
+  -readability-avoid-const-params-in-decls,
+  -readability-avoid-nested-conditional-operator,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-macro-to-enum,
+  -modernize-deprecated-headers,
+  -modernize-use-auto,
+  -modernize-avoid-c-arrays,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-type-cstyle-cast,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-macro-usage,
+  -cppcoreguidelines-macro-to-enum
+
+# Treat warnings as errors: empty means no (only actual errors fail)
+WarningsAsErrors: ''
+
+# Filter headers to check
+HeaderFilterRegex: 'src/.*\.h'
+
+# Use LLVM style for formatting suggestions
+FormatStyle: llvm
+
+CheckOptions:
+  - key: readability-braces-around-statements.ShortStatementLines
+    value: '2'
+  - key: readability-function-size.LineThreshold
+    value: '200'
+  - key: readability-function-size.StatementThreshold
+    value: '150'
+  - key: modernize-use-nullptr.NullMacros
+    value: 'NULL'

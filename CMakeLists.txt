@@ -73,4 +73,14 @@ target_compile_definitions(srtla_send PUBLIC VERSION="${CMAKE_PROJECT_VERSION}")
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
-install(TARGETS srtla_rec srtla_send RUNTIME DESTINATION bin)
+# Receiver-only install: the C srtla_send target above is still BUILT (upstream
+# keeps it, and CI verifies it links), but the device-side sender is the Rust
+# srtla-send-rs, so the C sender is deliberately excluded from `install`.
+install(TARGETS srtla_rec RUNTIME DESTINATION bin)
+
+# Testing
+option(SRTLA_BUILD_TESTS "Build tests" ON)
+if(SRTLA_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+  enable_testing()
+  add_subdirectory(tests)
+endif()

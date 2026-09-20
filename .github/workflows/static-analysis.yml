@@ -1,0 +1,114 @@
+name: Static Analysis
+
+on:
+  push:
+    branches: [upstream/main]
+  pull_request:
+    branches: [upstream/main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-analysis-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-tidy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-tidy \
+            cmake \
+            pkg-config \
+            python3-yaml
+
+      - name: Check workflow contracts
+        run: |
+          tests/workflow-contracts.sh
+          tests/workflow-contracts-negative.sh
+
+      # No CMake lint target: CMakeLists.txt stays upstream-identical apart from
+      # the receiver-only install line, so clang-tidy is driven off the exported
+      # compilation database instead.
+      - name: Configure CMake
+        run: cmake -B build -DSRTLA_BUILD_TESTS=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Run clang-tidy
+        run: |
+          clang-tidy -p build \
+            src/common.c \
+            src/connection/connection.cpp \
+            src/connection/connection_group.cpp \
+            src/connection/connection_registry.cpp \
+            src/metrics/prometheus.cpp \
+            src/protocol/srt_handler.cpp \
+            src/protocol/srtla_handler.cpp \
+            src/quality/load_balancer.cpp \
+            src/quality/metrics_collector.cpp \
+            src/quality/quality_evaluator.cpp \
+            src/receiver_main.cpp \
+            src/sender.cpp \
+            src/utils/auth_rate_limiter.cpp \
+            src/utils/nak_dedup.cpp \
+            src/utils/network_utils.cpp
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            pkg-config \
+            ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-test-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-test-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -DSRTLA_BUILD_TESTS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: |
+          cmake --build build -j"$(nproc)"
+
+      - name: Run tests
+        run: |
+          ctest --test-dir build --output-on-failure
+
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi
