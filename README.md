@@ -224,6 +224,102 @@ Divide `srtla_packets_received_total` by `srtla_recv_batches_total` for the rece
 
 srtla_rec creates information files about active connections under `/tmp/srtla-group-[PORT]`. These files contain the client IP addresses connected to a specific socket.
 
+## CERALIVE layer
+
+This checkout is [CERALIVE's](https://github.com/CERALIVE/srtla) fork of
+[irlserver/srtla](https://github.com/irlserver/srtla). Everything above this section is
+upstream's README, unchanged. `src/` is byte-identical to the upstream commit the fork
+sits on; CERALIVE adds only the build policy, CI and test layer described here. See
+[`AGENTS.md`](AGENTS.md) for the maintainer contract.
+
+### Receiver only
+
+`cmake --install` puts exactly one binary in `bin/`: `srtla_rec`. The C `srtla_send`
+target still builds (upstream keeps it and CI checks that it links), but it is not
+installed and it is not what CERALIVE devices run. The device-side sender is the Rust
+[srtla-send-rs](https://github.com/CERALIVE/srtla-send-rs), which is CLI-compatible with
+the C sender (`SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT IPS_FILE`) and speaks the same
+wire protocol, extended keepalive included. The `Verify receiver-only install` step in
+`build-check.yml` fails the build if anything else lands in `bin/`.
+
+### No releases: build from source at a git ref
+
+This repo cuts no GitHub releases, no `.deb`, no tarballs and no tags. Every consumer
+builds the receiver from source at a commit or branch it chooses:
+
+```bash
+git clone https://github.com/CERALIVE/srtla.git
+cd srtla
+git checkout <ref>          # a branch, or a 40-hex commit for reproducibility
+git submodule update --init # deps/argparse
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+cmake --install build --prefix /usr/local   # installs bin/srtla_rec only
+```
+
+Upstream's `build-and-push.yml` is kept as-is: a push to `main` publishes
+`ghcr.io/ceralive/srtla:<sha>` and `:latest`, which is the one prebuilt form of the
+receiver. Server images that want the receiver either pull that image or compile it at
+image-build time from a pinned ref. There is nothing else to fetch.
+
+`project(srtla_rec VERSION 1.0.0)` in `CMakeLists.txt` stays exactly upstream's. Nothing
+is released, so there is nothing to bump.
+
+### Test harness
+
+Unit and handler tests live in `tests/` (GoogleTest, fetched by CMake). They compile
+against the unmodified upstream `src/`; a test that would need a fork-only seam is not
+ported, and the drop list sits at the end of `tests/CMakeLists.txt`.
+
+```bash
+cmake -B build && cmake --build build && ctest --test-dir build --output-on-failure
+```
+
+`-DSRTLA_BUILD_TESTS=OFF` skips them. `-DBUILD_COMPAT_TESTS=ON` additionally builds the
+compat instruments (`srt-sink`, `ext-ka-probe`) under `tests/compat/`.
+
+### Compatibility harness
+
+`tests/compat/` is a Docker-based interop matrix that runs this receiver against the
+ecosystem's senders (BELABOX, irlserver's Rust sender, CERALIVE's Rust sender, a Moblin
+conformance mock) and the CERALIVE sender against the ecosystem's receivers (BELABOX,
+OpenIRL, go-srtla, go-irl). `tests/compat/matrix.yaml` is the single registry of pins and
+pairs; every third-party implementation is addressed by an immutable `pin:`, every
+CERALIVE branch by a moving `ref:`.
+
+```bash
+bash tests/compat/run-matrix.sh --validate-only      # schema + invariants, no Docker
+bash tests/compat/run-matrix.sh --tier blocking      # the pairs that gate a PR
+python3 tests/compat/lib/ab-verdict.py --selftest    # the frozen A/B rules
+```
+
+The same harness carries two pre-registered A/B campaigns under
+`tests/compat/scenarios/ab-*.yaml` (periodic-NAK gating on the receiver-side libsrt,
+and recovery-keepalive cadence). Their decision rules are frozen text; `ab-verdict.py`
+recomputes the winner from a committed `rows.json`. They are never run by CI, only on
+a quiesced bench host. The privileged netem scenarios self-skip (exit 77) without
+`CAP_NET_ADMIN`. See [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
+
+### CI
+
+| Workflow | Trigger | What it proves |
+|---|---|---|
+| `build-check.yml` | push / PR | AMD64 + ARM64 build, `ctest`, receiver-only install |
+| `static-analysis.yml` | push / PR | `clang-tidy`, the workflow-contract scripts, a test lane |
+| `compat-matrix.yml` | push / PR / weekly | harness self-test, blocking + informational pairs, pcap replay, upstream drift |
+| `build-and-push.yml` | push to `main` | upstream's GHCR image |
+
+`tests/workflow-contracts.sh` pins the shape of the workflows (ccache bounds, permission
+scopes, job graph); `tests/workflow-contracts-negative.sh` proves those assertions bite.
+
+### Further reading
+
+- [`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md): protocol, registration, quality model
+- [`docs/NETWORK_SETUP.md`](docs/NETWORK_SETUP.md): source routing on the sender host
+- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md): failure modes and diagnostics
+- [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md): ecosystem interop and guarantees
+- [`docs/adr/ADR-002-srt-patch-necessity.md`](docs/adr/ADR-002-srt-patch-necessity.md): the historical srt-patch A/B
+
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0](LICENSE):
