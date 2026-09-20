@@ -33,20 +33,27 @@ stack:
     note: >-
       Supplies SRTO_PERIODICNAKGATE (119) as a tri-state. Built by
       tests/compat/lib/build-libsrt-matrix.sh and selected under srt-sink via
-      SINK_LD_LIBRARY_PATH; not yet tagged, hence a branch ref.
+      SINK_LD_LIBRARY_PATH; not yet tagged, hence a branch ref. Resolved and
+      built for this campaign: sha 51d500c428c8e618848ee63b16efef77959938c9,
+      libsrt.so.1.5.7 sha256
+      c5475bc614d9615ea0c108613aa9ead0a01a8613e53475c08b8697d3944935b6.
   sink:
     kind: irl-srt-server
-    resolved: false
-    image: null
-    image_sha256: null
+    resolved: true
+    image: sls-hf:9dd6cdb
+    image_sha256: sha256:24827eaa209ad206fcbc3c9447f4888c813420d34d7e9ab80c2b4e11ac670c6d
     note: >-
-      UNRESOLVED FORWARD DEPENDENCY. The sink is the upstream-base SLS image
-      built locally by the SLS hard-fork step, which has not run yet — no such
-      image exists on this host (only legacy irl-srt-server:* tags do). The
-      campaign step MUST build it, record the image id + sha256 here, flip
-      `resolved` to true, and re-commit this document BEFORE launching. A
-      campaign run against an unrecorded sink is not reproducible and must not
-      be accepted.
+      RESOLVED. Built locally from irl-srt-server upstream/main HEAD
+      9dd6cdb01da66a83b84d3c43f94375387fb6bc6e (Dockerfile ARG SRT_COMMIT
+      51d500c428c8e618848ee63b16efef77959938c9) with
+      `docker build -t sls-hf:9dd6cdb .`; `image` is the tag and
+      `image_sha256` the image id / manifest-list digest reported by the build.
+      EXERCISED-RECEIVER NOTE: reorder-stress.sh (the named instrument) ends the
+      SRT leg at its own `srt-sink` helper, not the SLS server binary; the
+      receive-side option under test is armed on srt-sink against the patched
+      libsrt above. The SLS image is recorded because this pre-registration
+      names it as the sink; the receiver identity that actually ran is
+      srt-sink, built from srtla upstream/main with -DBUILD_COMPAT_TESTS=ON.
 
 topology:
   bonded_links: 2
