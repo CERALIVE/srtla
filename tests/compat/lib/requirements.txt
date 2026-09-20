@@ -1,0 +1,11 @@
+# Python dependencies for the compat harness helpers.
+#
+# The harness is deliberately stdlib-only apart from a YAML parser: matrix.yaml
+# and the pre-registered A/B documents are YAML, and shelling out to `yq` would
+# add an unpinned binary to every bench host. Install with:
+#
+#   python3 -m pip install -r tests/compat/lib/requirements.txt
+#
+# On Debian/Ubuntu the distro package `python3-yaml` satisfies this too, which
+# is what CI installs.
+pyyaml>=6.0,<7

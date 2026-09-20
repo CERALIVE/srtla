@@ -84,3 +84,11 @@ if(SRTLA_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.tx
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+# Compatibility harness helpers (srt-sink mock endpoint, ext-ka probe). OFF by
+# default because they link libsrt, which the receiver itself does not need.
+option(BUILD_COMPAT_TESTS "Build compat-test helpers (srt-sink, ext-ka probe)" OFF)
+if(BUILD_COMPAT_TESTS)
+  add_subdirectory(tests/compat/srt-sink)
+  add_subdirectory(tests/compat/ext-ka-probe)
+endif()

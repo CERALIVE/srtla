@@ -1,0 +1,123 @@
+# Pre-registered A/B campaign: periodic-NAK gate semantics.
+#
+# FROZEN. The `rule:` block at the bottom is the decision procedure, copied
+# verbatim from the plan item that commissioned this campaign; it is the ONLY
+# thing allowed to pick a winner, and tests/compat/lib/ab-verdict.py is the only
+# thing allowed to apply it. Every threshold below is restated in that text, and
+# `ab-verdict.py --selftest` fails if the two ever disagree.
+#
+# Not run by CI: needs a quiesced bench host with CAP_NET_ADMIN.
+
+schema_version: 1
+name: ab-periodic-nak
+question: >-
+  Under cross-link reorder stress, does the receiver-side periodic-NAK FILTER
+  (SRTO_PERIODICNAKGATE=1) deliver lower viewer-observed loss than the
+  bit-exact upstream SUPPRESS behaviour (=2) without costing goodput? The
+  winner becomes the value the SRTO_SRTLAPATCHES compat setter applies.
+privileged: true
+instrument: tests/compat/scenarios/reorder-stress.sh
+group_key: cell
+runs_per_group: 3
+
+stack:
+  sender:
+    repo: https://github.com/CERALIVE/srtla-send-rs
+    ref: upstream/v4
+  receiver:
+    repo: https://github.com/CERALIVE/srtla
+    ref: upstream/main
+  libsrt:
+    repo: https://github.com/CERALIVE/srt
+    ref: feat/srtla-options-1.5.7
+    note: >-
+      Supplies SRTO_PERIODICNAKGATE (119) as a tri-state. Built by
+      tests/compat/lib/build-libsrt-matrix.sh and selected under srt-sink via
+      SINK_LD_LIBRARY_PATH; not yet tagged, hence a branch ref.
+  sink:
+    kind: irl-srt-server
+    resolved: false
+    image: null
+    image_sha256: null
+    note: >-
+      UNRESOLVED FORWARD DEPENDENCY. The sink is the upstream-base SLS image
+      built locally by the SLS hard-fork step, which has not run yet — no such
+      image exists on this host (only legacy irl-srt-server:* tags do). The
+      campaign step MUST build it, record the image id + sha256 here, flip
+      `resolved` to true, and re-commit this document BEFORE launching. A
+      campaign run against an unrecorded sink is not reproducible and must not
+      be accepted.
+
+topology:
+  bonded_links: 2
+  note: >-
+    reorder-stress.sh's two-source-IP veth into a private receiver netns, with
+    asymmetric per-link delay (50ms/150ms) already providing the cross-link
+    reorder the SRTLA scheduler produces in the field.
+
+arms:
+  - id: A
+    label: periodicnakgate=1 (filter)
+    apply:
+      PERIODICNAKGATE: 1
+      REORDERFREEZE: 1
+      LOSSMAXTTL: 200
+  - id: B
+    label: periodicnakgate=2 (suppress, upstream-exact)
+    apply:
+      PERIODICNAKGATE: 2
+      REORDERFREEZE: 1
+      LOSSMAXTTL: 200
+
+groups:
+  - id: loss0.5-reorder10
+    apply:
+      STEADY_LOSS_PCT: 0.5
+      REORDER_PCT: 10
+      REORDER_GAP: 5
+  - id: loss0.5-reorder25
+    apply:
+      STEADY_LOSS_PCT: 0.5
+      REORDER_PCT: 25
+      REORDER_GAP: 5
+  - id: loss2-reorder10
+    apply:
+      STEADY_LOSS_PCT: 2
+      REORDER_PCT: 10
+      REORDER_GAP: 5
+  - id: loss2-reorder25
+    apply:
+      STEADY_LOSS_PCT: 2
+      REORDER_PCT: 25
+      REORDER_GAP: 5
+
+metrics:
+  - loss_pp
+  - goodput_kbps
+  - retransmit_ratio
+  - valid
+
+units:
+  loss_pp: percentage_points
+  goodput_kbps: kilobits_per_second
+  retransmit_ratio: ratio
+
+decision:
+  kind: d10-loss-goodput
+  primary_metric: loss_pp
+  guard_metric: goodput_kbps
+  loss_noise_band_pp: 0.100
+  goodput_guard_ratio: 0.97
+  groups_required_for_a: 3
+
+verdict:
+  arm_a: periodicnakgate=1
+  arm_b: periodicnakgate=2
+  winner_values:
+    A: 1
+    B: 2
+  default_winner: 2
+  insufficient_runs_reason: insufficient_valid_runs
+
+rule: |
+  ARM A = `SRTO_PERIODICNAKGATE=1` (filter); ARM B = `SRTO_PERIODICNAKGATE=2` (suppress); both with `REORDERFREEZE=1`, `LOSSMAXTTL=200`. Per run record `loss_pp` (viewer-observed loss, percentage points, 3 decimals) and `goodput_kbps` (integer). Per cell and arm take the MEDIAN over the 3 valid runs. A "wins loss" on a cell iff `median_loss_A < median_loss_B − 0.100` (noise band = 0.100 pp absolute; a difference ≤ 0.100 is a tie for that cell). Goodput guard on a cell: `median_goodput_A ≥ 0.97 × median_goodput_B`. WINNER = A (value `1`) iff A wins loss on ≥ 3 of the 4 cells AND the goodput guard holds on ALL 4 cells; in every other case WINNER = B (value `2`, upstream parity) — including any cell tie shortfall. Invalid run = harness error, missing metric, or capture < 90 % of the scenario duration; an invalid run is re-run once; if any (arm, cell) cannot reach 3 valid runs, WINNER = B and `verdict.json.reason = "insufficient_valid_runs"`. No other discretion exists.

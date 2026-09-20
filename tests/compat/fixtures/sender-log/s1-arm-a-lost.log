@@ -1,0 +1,18 @@
+2026-09-20T10:00:00.000Z  INFO  srtla_send: listening for SRT on [::]:6000
+2026-09-20T10:00:00.400Z  INFO  srtla_send: added uplink 192.0.2.10
+2026-09-20T10:00:00.500Z  INFO  srtla_send: added uplink 192.0.2.11
+2026-09-20T10:00:00.900Z  INFO  srtla_send: REG1 → uplink #0 (258 bytes)
+2026-09-20T10:00:01.200Z  DEBUG srtla_send: REG3 from uplink #0
+2026-09-20T10:00:01.300Z  DEBUG srtla_send: REG3 from uplink #1
+2026-09-20T10:00:01.400Z  INFO  srtla_send: connection established (active=2)
+2026-09-20T10:00:01.600Z  DEBUG srtla_send: Initial connection selected: 192.0.2.10
+2026-09-20T10:00:02.000Z  DEBUG srtla_send: Connection switch: 192.0.2.10 → 192.0.2.11 (seq: Some(11))
+2026-09-20T10:00:30.000Z  INFO  srtla_send: Connection Status Report:
+2026-09-20T10:00:30.000Z  INFO  srtla_send:     [0] ACTIVE 192.0.2.10 - Score: 100 - Last recv/send: 0.1s ago/0.1s ago - Window: 8192 - In-flight: 4 - Bitrate: 2.10 Mbps
+2026-09-20T10:00:30.000Z  INFO  srtla_send:     [1] TIMED_OUT 192.0.2.11 - Score: 0 - Last recv/send: 10.1s ago/10.1s ago - Window: 1 - In-flight: 0 - Bitrate: 0.00 Mbps
+2026-09-20T10:00:33.500Z  INFO  srtla_send: 192.0.2.11 marked for recovery; re-sending REG1
+2026-09-20T10:00:33.600Z  INFO  srtla_send: REG1 → uplink #1 (258 bytes)
+2026-09-20T10:00:34.900Z  DEBUG srtla_send: REG3 from uplink #1
+2026-09-20T10:01:00.000Z  INFO  srtla_send: Connection Status Report:
+2026-09-20T10:01:00.000Z  INFO  srtla_send:     [0] ACTIVE 192.0.2.10 - Score: 100 - Last recv/send: 0.1s ago/0.1s ago - Window: 8192 - In-flight: 6 - Bitrate: 3.90 Mbps
+2026-09-20T10:01:00.000Z  INFO  srtla_send:     [1] ACTIVE 192.0.2.11 - Score: 12 - Last recv/send: 0.3s ago/25.1s ago - Window: 1 - In-flight: 0 - Bitrate: 0.00 Mbps

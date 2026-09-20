@@ -1,0 +1,338 @@
+# SRTLA Compatibility Matrix Registry
+# Single source of truth for compat test pairs.
+# Pin refresh policy: manual refresh; weekly drift job tests upstream HEAD non-blocking.
+#
+# Pin vs ref
+# ----------
+# Every external implementation is addressed by EXACTLY ONE of:
+#   pin: <40-hex sha>   an immutable commit (third-party upstreams — never moves)
+#   ref: <branch|tag>   a moving CERALIVE ref (our own hard-fork branches, which
+#                       are still advancing and are renamed/tagged by a later
+#                       step; a 40-hex pin here would go stale on every push).
+# validate-matrix.py enforces the "exactly one" rule; gen-ci-matrix.sh feeds
+# whichever is present to the image's first `ARG` as the build ref.
+
+# The libsrt build the A/B scenarios link srt-sink against. CERALIVE/srt carries
+# the SRTLA option set (SRTO_SRTLAPATCHES = 118, SRTO_PERIODICNAKGATE = 119) that
+# scenarios/ab-periodic-nak.yaml measures. Not yet tagged or released, so it is a
+# branch ref; lib/build-libsrt-matrix.sh defaults to this pair.
+srt:
+  repo: https://github.com/CERALIVE/srt
+  ref: feat/srtla-options-1.5.7
+  notes: >-
+    Haivision v1.5.7 + the CERALIVE SRTLA option set. Provides
+    SRTO_PERIODICNAKGATE as a tri-state (0 off / 1 filter / 2 suppress) — the
+    two arms of the ab-periodic-nak scenario. Replace `ref` with `pin` once
+    srt-v1.5.7+ceralive.2 is tagged.
+
+# Declared cardinality of the pair table. validate-matrix.py checks the actual
+# pair list against these so an accidental addition or deletion is caught, while
+# an intentional change is an explicit, reviewable edit here.
+invariants:
+  blocking_pairs: 9
+  informational_pairs: 4
+
+senders:
+  - name: belabox-srtla-send
+    repo: https://github.com/BELABOX/srtla
+    pin: 6f3925eb85b0ce75d3b28e65b12e88baed222f71
+    role: sender
+    build: docker/belabox-sender/Dockerfile
+    tier: blocking
+    notes: >-
+      BELABOX reference sender, pinned to the *oldest srtla2* commit
+      ("srtla2: now with receiver support for multiple connections",
+      2021-02-04) — the first BELABOX revision that speaks the REG1/REG2/REG3
+      handshake. This is deliberately the earliest interoperable srtla2 build so
+      the blocking tier proves our modern srtla_rec still accepts a 4-year-old
+      field sender (maximum backward-compat surface). Do NOT move this back to
+      pre-2021-02-04 SHAs: those are srtla1 (keepalive/ack only, no registration)
+      — a different, superseded protocol generation we intentionally do not
+      support. See docs/COMPATIBILITY.md.
+
+  - name: irlserver-srtla-send
+    repo: https://github.com/irlserver/srtla_send
+    pin: ef95926918d8a4a87579c13c19a3d38dde4ca381
+    role: sender
+    build: docker/irlserver-srtla-send/Dockerfile
+    tier: blocking
+    notes: "irlserver Rust sender (the upstream our own sender is forked from)"
+
+  - name: ceralive-srtla-send-rs
+    repo: https://github.com/CERALIVE/srtla-send-rs
+    ref: upstream/v4
+    role: sender
+    build: docker/ceralive-srtla-send-rs/Dockerfile
+    tier: blocking
+    notes: >-
+      CERALIVE Rust srtla_send, hard-forked onto the irlserver upstream base.
+      Built FROM SOURCE at the `ref` above inside the compat image — this repo
+      consumes no sender release artifact and no .deb, so the pair cannot drift
+      away from the branch under test. The branch is renamed to `main` by the
+      canonical-swap step; update `ref` (or replace it with `pin`/a release tag)
+      in the same change. CLI is positional-compatible with the C sender
+      (SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT IPS_FILE). The receiver stays the C
+      srtla_rec.
+
+  - name: moblin-mock
+    repo: https://github.com/eerimoq/moblin
+    pin: 0ae5294950166978064840bc874bfed3a8cf03a4
+    role: sender
+    build: tests/compat/moblin-mock/
+    tier: blocking
+    notes: "Conformance mock (C++/Python); no Swift compilation"
+
+receivers:
+  - name: belabox-srtla-rec
+    repo: https://github.com/BELABOX/srtla
+    pin: 6f3925eb85b0ce75d3b28e65b12e88baed222f71
+    role: receiver
+    build: docker/belabox-receiver/Dockerfile
+    tier: blocking
+    notes: >-
+      BELABOX reference receiver; same repo and same oldest-srtla2 pin as the
+      sender entry (2021-02-04). Tests that our modern srtla_send still registers
+      against the earliest srtla2 receiver. Pre-2021-02-04 SHAs are srtla1 and
+      out of scope — see the belabox-srtla-send note and docs/COMPATIBILITY.md.
+
+  - name: openirl-receiver
+    repo: https://github.com/OpenIRL/srtla-receiver
+    pin: d8fd677812b5706008dd329ba6239429ec5bc51c
+    role: receiver
+    build: docker/openirl-receiver/Dockerfile
+    tier: blocking
+    notes: >-
+      OpenIRL receiver. The compat image builds only the srtla_rec component
+      (the SRTLA->SRT forwarder) from https://github.com/OpenIRL/srtla pinned at
+      e9ba6a36ffaf179e92e06c7e3967637959fff363 (OPENIRL_SRTLA_REF build ARG).
+      The full OpenIRL management stack (srt-live-server + streamid/apikey auth)
+      is intentionally omitted: it cannot forward to a plain SRT sink and so
+      does not fit the SRTLA_PORT/SRT_TARGET_HOST/SRT_TARGET_PORT env contract
+      the harness uses; protocol compat only exercises the SRTLA path. CLI:
+      srtla_rec --srtla_port P --srt_hostname H --srt_port P2. No source patch.
+
+  - name: go-srtla
+    repo: https://github.com/e04/go-srtla
+    pin: 8a3b55ba562891ddc6d272cb015e136035bbffc8
+    role: receiver
+    build: docker/go-srtla/Dockerfile
+    tier: informational
+    notes: "Go implementation"
+
+  - name: go-irl
+    repo: https://github.com/e04/go-irl
+    pin: fa9c1185182a1f59502e62e9fd6eb0fd8ad8c2d4
+    role: receiver
+    build: docker/go-irl/Dockerfile
+    tier: informational
+    notes: >-
+      go-irl is a full IRL app (SRTLA receiver + SRT proxy + browser source +
+      WebSocket UI). Headless receiver-only invocation:
+      ./go-irl -mode=server -srtla-port=5000 -srt-host=127.0.0.1 -srt-port=5001
+      -mode=server runs ONLY the SRTLA receiver (runSrtla), no proxy/UI.
+      Flags use HYPHENS (go-srtla, a different binary, uses underscores).
+      Build-fix (no source patch): go-irl //go:embed's frontend/dist/index.html,
+      a vite artifact absent from the repo, so the Docker build stages a
+      placeholder to let `go build` succeed; server mode never serves it.
+
+pairs:
+  - sender: belabox-srtla-send
+    receiver: ours
+    tier: blocking
+
+  - sender: irlserver-srtla-send
+    receiver: ours
+    tier: blocking
+
+  - sender: ceralive-srtla-send-rs
+    receiver: ours
+    tier: blocking
+    notes: "Shipping pair — CERALIVE Rust srtla_send -> C srtla_rec"
+
+  # The CERALIVE Rust sender vs the OTHER ecosystem receivers — wire interop
+  # beyond our own srtla_rec. All basic healthy-stream pairs (scenario=stream, no
+  # netem) so they stay unprivileged (impairment/netem lives only in the
+  # privileged jobs); tier mirrors the matching `ours -> <receiver>` pair.
+  # `skip_if_missing: true` tracks the harness' existing auto-SKIP when the
+  # sender or receiver image is unbuilt — never a hard failure. No standalone
+  # irlserver srtla_rec exists here (irlserver is sender-only); go-irl/go-srtla
+  # cover Go.
+  - sender: ceralive-srtla-send-rs
+    receiver: belabox-srtla-rec
+    tier: blocking
+    skip_if_missing: true
+    notes: "Rust fork sender -> oldest-srtla2 BELABOX receiver (backward-compat wire proof)"
+
+  - sender: ceralive-srtla-send-rs
+    receiver: openirl-receiver
+    tier: blocking
+    skip_if_missing: true
+    notes: "Rust fork sender -> OpenIRL srtla_rec (SRTLA-path-only image)"
+
+  - sender: moblin-mock
+    receiver: ours
+    tier: blocking
+
+  - sender: ours
+    receiver: belabox-srtla-rec
+    tier: blocking
+
+  - sender: ours
+    receiver: openirl-receiver
+    tier: blocking
+
+  - sender: ours
+    receiver: ours
+    tier: blocking
+    notes: "Extended-KA activation verification"
+
+  - sender: ours
+    receiver: go-srtla
+    tier: informational
+
+  - sender: ours
+    receiver: go-irl
+    tier: informational
+
+  # The Rust fork sender vs the Go receivers (see the blocking-tier block above
+  # for the skip_if_missing rationale). Informational to match the receivers'
+  # own tier and the `ours -> go-*` pairs.
+  - sender: ceralive-srtla-send-rs
+    receiver: go-srtla
+    tier: informational
+    skip_if_missing: true
+    notes: "Rust fork sender -> go-srtla (minimal Go receiver)"
+
+  - sender: ceralive-srtla-send-rs
+    receiver: go-irl
+    tier: informational
+    skip_if_missing: true
+    notes: "Rust fork sender -> go-irl (Go IRL receiver, server mode)"
+
+# End-to-end behavioral scenarios under tests/compat/scenarios/. These are
+# standalone scripts (NOT sender/receiver interop pairs): each drives our own
+# srtla_send/srtla_rec through a specific failure or stress condition and decides
+# its own PASS/FAIL. `requires` names the host capability the script gates on and
+# SKIPs cleanly without (exit code in `skip_exit`); `gated_on_disconnects` records
+# whether end-to-end SRT `disconnects == 0` is a pass gate (true only when the
+# scenario tears down no link — see each script's header).
+scenarios:
+  - name: receiver-restart
+    script: tests/compat/scenarios/receiver-restart.sh
+    requires: none
+    skip_exit: 3
+    gated_on_disconnects: false
+    proves: "Sender re-registers within ~5s after receiver SIGKILL+restart."
+
+  - name: link-drop
+    script: tests/compat/scenarios/link-drop.sh
+    requires: iptables
+    skip_exit: 3
+    gated_on_disconnects: false
+    proves: >-
+      Two bonded links; isolating one makes the sender shift off it within
+      CONN_TIMEOUT (survivor stays up) and re-register on restore.
+
+  - name: sighup-reload
+    script: tests/compat/scenarios/sighup-reload.sh
+    requires: none
+    skip_exit: 1
+    gated_on_disconnects: true
+    proves: >-
+      A new IP joins the group on SIGHUP with 0 disconnects (no re-handshake);
+      a garbage IP file is refused without crashing or dropping links.
+
+  - name: jitter-stress
+    script: tests/compat/scenarios/jitter-stress.sh
+    requires: netem        # CAP_NET_ADMIN + ip/tc/ping; gated via netem_require
+    skip_exit: 77          # SKIP-PRIVILEGED, mirrors netem_require / pcap-replay
+    gated_on_disconnects: true
+    proves: >-
+      Two bonded links under three escalating live netem jitter phases
+      (150ms ±50/100/200ms, no loss) keep streaming with strictly-increasing
+      per-phase throughput, ZERO receiver link reaps, both links registered, and
+      disconnects == 0 — jitter alone must never kill a healthy link
+      (stresses RTT_VARIANCE_THRESHOLD=50ms end-to-end).
+
+  - name: reorder-stress
+    script: tests/compat/scenarios/reorder-stress.sh
+    requires: netem        # CAP_NET_ADMIN + ip/tc; gated via netem_require
+    skip_exit: 77          # SKIP-PRIVILEGED, mirrors netem_require / pcap-replay
+    gated_on_disconnects: true
+    proves: >-
+      Cross-link packet reordering — THE core SRTLA stress. Two bonded source
+      IPs ride one tc-netem-shaped veth into a private netns hosting
+      srtla_rec + srt-sink, shaped with asymmetric per-link delay (50ms/150ms,
+      prio+u32 classified per source) plus an explicit reorder phase on the fast
+      link. Gates: handshake, bytes_received >= 5000 and disconnects == 0 over
+      >= 30s, and the reorder phase provably active (non-zero packets through
+      the reorder-configured qdisc). Doubles as the A/B measurement instrument:
+      SINK_LD_LIBRARY_PATH selects the receiver libsrt build and the receive
+      knobs (REORDERFREEZE / LOSSMAXTTL / PERIODICNAKGATE / STEADY_LOSS_PCT /
+      REORDER_PCT / REORDER_GAP) parameterise the arm and the netem cell. It
+      emits one machine-parseable summary line and makes no A/B judgement.
+      Unprivileged: exit 77 (SKIP).
+
+  - name: link-drop-high-rtt
+    script: tests/compat/scenarios/link-drop-high-rtt.sh
+    tier: blocking
+    privileged: true
+    notes: >-
+      Bonded link-drop / shift under 200ms±20ms RTT — netem `delay 200ms 20ms
+      distribution normal` applied to BOTH links via tests/compat/lib/netem.sh.
+      Two srtla_send source IPs ride one tc-netem-shaped veth into a private
+      netns hosting srtla_rec + srt-sink; link1 is isolated mid-stream with
+      iptables. Gates: handshake <=10s under 200ms RTT, bytes_received >= 5000,
+      and the sender shifts off the dead link within SENDER_CONN_TIMEOUT while
+      the survivor keeps delivering. Per tests/KNOWN_BUGS.md (link-drop
+      precedent), end-to-end SRT `disconnects` is recorded but is NOT a pass
+      gate for the isolation phase. Unprivileged: netem_require exits 77 (SKIP).
+
+  - name: ts-continuity-loopback
+    script: tests/compat/scenarios/ts-continuity-loopback.sh
+    requires: srt-live-transmit
+    skip_exit: 3
+    gated_on_disconnects: false
+    proves: >-
+      Real-SRT loopback over 127.0.0.1 proving srt-sink's MPEG-TS continuity
+      metric is correct AND falsifiable: a clean transport stream sent raw
+      yields ts_sync_errors==0 and ts_cc_errors==0, while the SAME TS with one
+      payload-bearing packet excised yields ts_cc_errors>0. Raw byte passthrough
+      (srt-live-transmit, NOT ffmpeg — which re-muxes the container and would
+      heal the injected drop) preserves the continuity break end-to-end; the
+      send is paced to ~real time and null-padded to a whole SRT chunk so the
+      live socket neither drops nor zero-pads into spurious sync errors.
+      Unprivileged; SKIPs (exit 3) without srt-live-transmit. Integration
+      companion to the hermetic `ts-continuity` ctest (same proof, no network).
+
+# Pre-registered A/B campaigns. Each is a committed scenario document under
+# tests/compat/scenarios/*.yaml carrying a FROZEN decision `rule:` (copied
+# verbatim from the plan that commissioned it) plus the arms, cells and metric
+# set. tests/compat/lib/ab-verdict.py is the only thing that turns rows.json
+# into a winner, so the verdict is a recomputation, never a judgement call.
+# These are NOT run by CI: they need a dedicated, quiesced bench host.
+ab_campaigns:
+  - name: ab-periodic-nak
+    document: tests/compat/scenarios/ab-periodic-nak.yaml
+    instrument: tests/compat/scenarios/reorder-stress.sh
+    privileged: true
+    notes: >-
+      SRTO_PERIODICNAKGATE=1 (filter) vs =2 (suppress) on the receiver-side
+      libsrt, measured through cross-link reorder stress. Fixes the value the
+      SRTO_SRTLAPATCHES compat setter applies.
+
+  - name: ab-keepalive-cadence
+    document: tests/compat/scenarios/ab-keepalive-cadence.yaml
+    instrument: tests/compat/scenarios/ab-campaign.sh
+    privileged: true
+    notes: >-
+      Upstream srtla_rec recovery-keepalive cadence vs the legacy cadence patch
+      (applied at build time from tests/compat/patches/, never committed to
+      src/). Judged on SENDER-observed link survival, re-registration count and
+      time-to-recovery.
+
+excluded:
+  - name: moblink-rust
+    repo: https://github.com/datagutt/moblink-rust
+    reason: "WebSocket-based Moblink relay protocol, not SRTLA — no 0x9200-range constants found in src/; uses JSON serialization and WebSocket transport (src/protocol.rs, src/streamer.rs)"
+    studied_at: "dbf44769144f46541e7f47ed29c4b4b037f50cbd"

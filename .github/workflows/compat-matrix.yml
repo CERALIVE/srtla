@@ -1,0 +1,726 @@
+name: Compatibility Matrix
+
+# Cross-implementation SRTLA interop, driven by tests/compat/matrix.yaml
+# (the single source of truth) via tests/compat/gen-ci-matrix.sh.
+#
+#   * blocking tier  -> gates merges (a failing blocking pair fails this run)
+#   * informational  -> gates merges on PRs (pins are fixed, so a failure is a
+#                        real regression rather than upstream drift)
+#   * weekly drift    -> re-runs the informational tier against upstream HEADs,
+#                        purely to surface upstream divergence; never blocks
+#
+# Each tier fans out one job per pair (strategy.matrix from generate-matrix), so
+# the independent pairs run in parallel rather than as one long sequential job.
+# Per-tier gate jobs ("Blocking tier" / "Informational tier") aggregate the legs
+# back into a single, stable merge-gating status check.
+#
+# amd64 only — bonded UDP interop is exercised on a single ubuntu-latest host.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [upstream/main]
+    paths:
+      - "src/**"
+      - "CMakeLists.txt"
+      - "tests/compat/**"
+      - ".github/workflows/compat-matrix.yml"
+      - ".github/actions/compat-build/**"
+  pull_request:
+    branches: [upstream/main]
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - "src/**"
+      - "CMakeLists.txt"
+      - "tests/compat/**"
+      - ".github/workflows/compat-matrix.yml"
+      - ".github/actions/compat-build/**"
+  schedule:
+    # Mondays 06:00 UTC — weekly upstream-drift detection.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-matrix-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  # --------------------------------------------------------------------- #
+  # Harness selftest — unprivileged, no docker, no network. Proves the     #
+  # registry and the pre-registered A/B documents still parse, that the    #
+  # frozen decision rules still produce their expected verdicts, and that  #
+  # the generated CI matrix carries no retired sender-release literal.     #
+  # The campaigns themselves need a bench host and never run here.         #
+  # --------------------------------------------------------------------- #
+  harness-selftest:
+    name: Compat harness selftest
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install PyYAML
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq python3-yaml
+
+      - name: Validate registry and A/B scenario documents
+        run: bash tests/compat/run-matrix.sh --validate-only
+
+      - name: Recompute the frozen A/B rules against their fixtures
+        run: |
+          python3 tests/compat/lib/ab-verdict.py --selftest
+          python3 tests/compat/lib/sender-log-metrics.py --selftest
+
+      - name: Expand every pre-registered campaign plan
+        run: |
+          for doc in tests/compat/scenarios/ab-*.yaml; do
+            name="$(basename "$doc" .yaml)"
+            bash tests/compat/scenarios/ab-campaign.sh --scenario "$name" --plan
+          done
+
+      - name: Refuse retired sender-release literals in the generated matrix
+        run: |
+          # The Rust sender is built from source at a git ref; no .deb, no
+          # release tag, no CalVer version may reach the CI matrix again.
+          generated="$(tests/compat/gen-ci-matrix.sh --pairs)$(tests/compat/gen-ci-matrix.sh --images)"
+          if printf '%s' "$generated" | grep -nE 'srtla-send-rs_|2026\.'; then
+            echo "::error title=compat matrix::retired sender-release literal in the generated matrix"
+            exit 1
+          fi
+          printf '%s' "$generated" | jq -e . >/dev/null
+
+      - name: Check the D21 build-time patch still applies
+        run: git apply --check tests/compat/patches/d21-recovery-keepalive-cadence.patch
+
+  # --------------------------------------------------------------------- #
+  # Exact-source privileged jitter lane. Pull requests exercise the exact  #
+  # head before merge; workflow_dispatch provides a repeatable one-shot    #
+  # entry point after the workflow is present on the default branch.       #
+  # --------------------------------------------------------------------- #
+  hosted-jitter:
+    name: Hosted privileged jitter (SRT 1.5.6)
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'pull_request' &&
+          github.event.action == 'labeled' &&
+          github.event.label.name == 'privileged-ci-approved'
+        )
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+      IRL_SRT_SERVER_SHA: 02fd73e3ef7795c1c631350adb8a873af67f1c4a
+      SRT_SHA: b06fdb6b85937f3f5cf5452b150a6bb7e35b0226
+      SRTLA_SEND_RS_SHA: 2a4ecd4a7d6e84cbcec56b09eecbf721838dc4d8
+      SRTLA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SRT_PREFIX: ${{ github.workspace }}/test-results/hosted-jitter-srt
+      EVIDENCE_DIR: ${{ github.workspace }}/test-results/hosted-jitter-evidence
+    steps:
+      - name: Checkout srtla
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Initialize hosted evidence
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          printf \
+            '{"requested_pins":{"irl_srt_server":"%s","srt":"%s","srtla_send_rs":"%s"}}\n' \
+            "$IRL_SRT_SERVER_SHA" "$SRT_SHA" "$SRTLA_SEND_RS_SHA" \
+            > "$EVIDENCE_DIR/requested-pins.json"
+
+      - name: Checkout pinned irl-srt-server source
+        uses: actions/checkout@v7
+        with:
+          repository: CERALIVE/irl-srt-server
+          ref: ${{ env.IRL_SRT_SERVER_SHA }}
+          path: _pinned/irl-srt-server
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Checkout pinned CERALIVE SRT source
+        uses: actions/checkout@v7
+        with:
+          repository: CERALIVE/srt
+          ref: ${{ env.SRT_SHA }}
+          path: _pinned/srt
+          persist-credentials: false
+
+      - name: Checkout pinned srtla-send-rs source
+        uses: actions/checkout@v7
+        with:
+          repository: CERALIVE/srtla-send-rs
+          ref: ${{ env.SRTLA_SEND_RS_SHA }}
+          path: _pinned/srtla-send-rs
+          persist-credentials: false
+
+      - name: Install build and netem dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ccache cmake ffmpeg iproute2 iputils-ping jq \
+            libssl-dev pkg-config tcl zlib1g-dev
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-compat-hosted-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-compat-hosted-
+
+      - name: Cache pinned SRT build
+        id: cache-srt
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.SRT_PREFIX }}
+          key: srt-ceralive-${{ runner.os }}-${{ env.SRT_SHA }}
+
+      - name: Cache Rust sender build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            _pinned/srtla-send-rs/target
+          key: cargo-${{ runner.os }}-srtla-send-${{ env.SRTLA_SEND_RS_SHA }}-${{ hashFiles('_pinned/srtla-send-rs/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-srtla-send-${{ env.SRTLA_SEND_RS_SHA }}-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
+
+      - name: Verify immutable receiver source binding
+        run: |
+          test "$(git -C _pinned/irl-srt-server rev-parse HEAD)" = "$IRL_SRT_SERVER_SHA"
+          test "$(git -C _pinned/srt rev-parse HEAD)" = "$SRT_SHA"
+          test "$(git -C _pinned/srtla-send-rs rev-parse HEAD)" = "$SRTLA_SEND_RS_SHA"
+          dockerfile_srt_sha="$(
+            sed -n 's/^ARG SRT_COMMIT=//p' _pinned/irl-srt-server/Dockerfile
+          )"
+          test "$dockerfile_srt_sha" = "$SRT_SHA"
+
+      - name: Build pinned SRT 1.5.6
+        if: steps.cache-srt.outputs.cache-hit != 'true'
+        working-directory: _pinned/srt
+        run: |
+          CC="ccache gcc" CXX="ccache g++" ./configure --prefix="$SRT_PREFIX"
+          make -j"$(nproc)"
+          make install
+
+      - name: Build and exercise pinned irl-srt-server runtime
+        env:
+          CPATH: ${{ env.SRT_PREFIX }}/include
+          LIBRARY_PATH: ${{ env.SRT_PREFIX }}/lib
+          LD_LIBRARY_PATH: ${{ env.SRT_PREFIX }}/lib
+          PKG_CONFIG_PATH: ${{ env.SRT_PREFIX }}/lib/pkgconfig
+        run: |
+          cmake -S _pinned/irl-srt-server -B build-hosted-irl \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSLS_BUILD_TESTS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-hosted-irl -j"$(nproc)"
+          ctest --test-dir build-hosted-irl --output-on-failure
+
+          irl_log="$EVIDENCE_DIR/irl-server-smoke.txt"
+          build-hosted-irl/bin/srt_server \
+            -c _pinned/irl-srt-server/tests/e2e/sls-loopback.conf \
+            > "$irl_log" 2>&1 &
+          irl_pid=$!
+          cleanup_irl() {
+            if kill -0 "$irl_pid" 2>/dev/null; then
+              kill -TERM "$irl_pid"
+              wait "$irl_pid"
+            fi
+          }
+          trap cleanup_irl EXIT
+          for _ in $(seq 1 30); do
+            if grep -q "SRT profile: L3-direct" "$irl_log" &&
+              grep -q "SRT profile: L1-freeze-nak" "$irl_log" &&
+              grep -q "SRT profile: L2-classic" "$irl_log"; then
+              break
+            fi
+            kill -0 "$irl_pid"
+            sleep 0.2
+          done
+          kill -0 "$irl_pid"
+          grep -q "SRT profile: L3-direct" "$irl_log"
+          grep -q "SRT profile: L1-freeze-nak" "$irl_log"
+          grep -q "SRT profile: L2-classic" "$irl_log"
+          kill -TERM "$irl_pid"
+          wait "$irl_pid"
+          trap - EXIT
+
+      - name: Build pinned Rust sender
+        working-directory: _pinned/srtla-send-rs
+        run: cargo build --release --locked --bin srtla_send
+
+      - name: Build srtla and exact-SRT compat helpers
+        env:
+          CPATH: ${{ env.SRT_PREFIX }}/include
+          LIBRARY_PATH: ${{ env.SRT_PREFIX }}/lib
+          LD_LIBRARY_PATH: ${{ env.SRT_PREFIX }}/lib
+          PKG_CONFIG_PATH: ${{ env.SRT_PREFIX }}/lib/pkgconfig
+        run: |
+          cmake -B build-hosted-jitter \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSRTLA_BUILD_TESTS=ON \
+            -DBUILD_COMPAT_TESTS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-hosted-jitter -j"$(nproc)"
+          ctest --test-dir build-hosted-jitter --output-on-failure
+
+      - name: Record source and runtime provenance
+        env:
+          LD_LIBRARY_PATH: ${{ env.SRT_PREFIX }}/lib
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          resolved_srt="$(
+            ldd build-hosted-jitter/tests/compat/srt-sink/srt-sink |
+              awk '/libsrt/{print $3; exit}'
+          )"
+          test -n "$resolved_srt"
+          test "$(readlink -f "$resolved_srt")" = \
+            "$(readlink -f "$SRT_PREFIX/lib/libsrt.so.1.5")"
+          resolved_irl_srt="$(
+            ldd build-hosted-irl/bin/srt_server |
+              awk '/libsrt/{print $3; exit}'
+          )"
+          test -n "$resolved_irl_srt"
+          test "$(readlink -f "$resolved_irl_srt")" = \
+            "$(readlink -f "$SRT_PREFIX/lib/libsrt.so.1.5")"
+          resolved_srtla_sha="$(git rev-parse HEAD)"
+          test "$resolved_srtla_sha" = "$SRTLA_SOURCE_SHA"
+          srt_sha256="$(sha256sum "$SRT_PREFIX/lib/libsrt.so.1.5.6" | cut -d' ' -f1)"
+          jq -n \
+            --arg srtla_sha "$resolved_srtla_sha" \
+            --arg workflow_event_sha "$GITHUB_SHA" \
+            --arg irl_srt_server_sha "$IRL_SRT_SERVER_SHA" \
+            --arg srt_sha "$SRT_SHA" \
+            --arg srtla_send_rs_sha "$SRTLA_SEND_RS_SHA" \
+            --arg srtla_send_rs_sha256 "$(sha256sum _pinned/srtla-send-rs/target/release/srtla_send | cut -d' ' -f1)" \
+            --arg irl_srt_server_sha256 "$(sha256sum build-hosted-irl/bin/srt_server | cut -d' ' -f1)" \
+            --arg libsrt_path "$(readlink -f "$resolved_srt")" \
+            --arg libsrt_sha256 "$srt_sha256" \
+            --arg runner_image "${ImageOS:-unknown}" \
+            --arg kernel "$(uname -srvm)" \
+            '{
+              srtla_sha:$srtla_sha,
+              workflow_event_sha:$workflow_event_sha,
+              irl_srt_server_sha:$irl_srt_server_sha,
+              srt_sha:$srt_sha,
+              srtla_send_rs_sha:$srtla_send_rs_sha,
+              srtla_send_rs_sha256:$srtla_send_rs_sha256,
+              irl_srt_server_sha256:$irl_srt_server_sha256,
+              libsrt_path:$libsrt_path,
+              libsrt_sha256:$libsrt_sha256,
+              runner_image:$runner_image,
+              kernel:$kernel
+            }' > "$EVIDENCE_DIR/provenance.json"
+          ldd build-hosted-jitter/tests/compat/srt-sink/srt-sink \
+            > "$EVIDENCE_DIR/srt-sink-ldd.txt"
+          ldd build-hosted-irl/bin/srt_server \
+            > "$EVIDENCE_DIR/irl-srt-server-ldd.txt"
+          tc -V > "$EVIDENCE_DIR/tc-version.txt"
+
+      - name: Prove sanctioned netem capability
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          set -o pipefail
+          sudo -n env PATH="$PATH" bash tests/compat/lib/netem.sh selfcheck \
+            2>&1 | tee "$EVIDENCE_DIR/netem-selfcheck.txt"
+
+      - name: Run and verify real jitter stress
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          set +e
+          set -o pipefail
+          sudo -n env \
+            PATH="$PATH" \
+            SINK_LD_LIBRARY_PATH="$SRT_PREFIX/lib" \
+            SRTLA_SEND_RS_BIN="$GITHUB_WORKSPACE/_pinned/srtla-send-rs/target/release/srtla_send" \
+            REQUIRE_RS_SENDER=1 \
+            SRTLA_BUILD_DIR="$GITHUB_WORKSPACE/build-hosted-jitter" \
+            bash tests/compat/scenarios/jitter-stress.sh \
+              --build-dir "$GITHUB_WORKSPACE/build-hosted-jitter" \
+              --keep-logs \
+            2>&1 | tee "$EVIDENCE_DIR/invocation.txt"
+          scenario_rc=${PIPESTATUS[0]}
+          set -e
+          jq -n --argjson exit_code "$scenario_rc" \
+            '{exit_code:$exit_code}' > "$EVIDENCE_DIR/scenario-exit.json"
+
+          result=tests/compat/results/jitter-stress/result.json
+          test "$scenario_rc" -eq 0
+          test -s "$result"
+          jq -e '
+            .scenario == "jitter-stress" and
+            .skipped != true and
+            .pass == true and
+            .stream.bytes_received >= (.min_phase_bytes * 3) and
+            .stream.disconnects == 0 and
+            .reaps.conn_removed == 0 and
+            .reaps.group_reaped == 0 and
+            .sender.kind == "rust" and
+            (.phases | length) == 3 and
+            all(.phases[]; .delta >= 5000 and .telemetry_conns >= 2)
+          ' "$result" > "$EVIDENCE_DIR/verified-result.json"
+
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi
+
+      - name: Upload hosted jitter evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hosted-jitter-${{ env.SRTLA_SOURCE_SHA }}
+          path: |
+            tests/compat/results/jitter-stress/**
+            ${{ env.EVIDENCE_DIR }}/**
+          if-no-files-found: error
+          retention-days: 30
+
+  # --------------------------------------------------------------------- #
+  # Derive the GitHub Actions matrix from matrix.yaml. Nothing downstream  #
+  # hardcodes a pair list; everything flows from this job's outputs.       #
+  # --------------------------------------------------------------------- #
+  generate-matrix:
+    name: Generate matrix from matrix.yaml
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    outputs:
+      blocking: ${{ steps.gen.outputs.blocking }}
+      informational: ${{ steps.gen.outputs.informational }}
+      has_informational: ${{ steps.gen.outputs.has_informational }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install PyYAML
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq python3-yaml
+
+      - name: Generate matrix
+        id: gen
+        run: |
+          blocking="$(tests/compat/gen-ci-matrix.sh --tier blocking)"
+          informational="$(tests/compat/gen-ci-matrix.sh --tier informational)"
+          {
+            echo "blocking=$blocking"
+            echo "informational=$informational"
+          } >> "$GITHUB_OUTPUT"
+          info_count="$(printf '%s' "$informational" | jq '.include | length')"
+          if [ "$info_count" -gt 0 ]; then
+            echo "has_informational=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_informational=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        env:
+          BLOCKING: ${{ steps.gen.outputs.blocking }}
+          INFORMATIONAL: ${{ steps.gen.outputs.informational }}
+        run: |
+          {
+            echo "## Compatibility matrix (from tests/compat/matrix.yaml)"
+            echo ""
+            echo "| tier | sender | receiver |"
+            echo "|------|--------|----------|"
+            printf '%s' "$BLOCKING" \
+              | jq -r '.include[] | "| blocking | \(.sender) | \(.receiver) |"'
+            printf '%s' "$INFORMATIONAL" \
+              | jq -r '.include[] | "| informational | \(.sender) | \(.receiver) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------- #
+  # Blocking tier — one job per pair, fanned out from matrix.yaml so the   #
+  # independent pairs run in parallel instead of one sequential job.       #
+  # fail-fast: false keeps every pair reporting; the compat-blocking-gate  #
+  # job below folds the legs into the single merge-gating status.          #
+  # --------------------------------------------------------------------- #
+  compat-blocking:
+    name: "blocking: ${{ matrix.sender }} -> ${{ matrix.receiver }}"
+    needs: generate-matrix
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.generate-matrix.outputs.blocking) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-compat-blocking-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-compat-blocking-
+
+      - name: Restore external image cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/compat-images
+          key: compat-images-${{ runner.os }}-amd64-blocking-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/gen-ci-matrix.sh', 'tests/compat/docker/**', 'tests/compat/moblin-mock/**', '.github/actions/compat-build/**') }}
+
+      - name: Build helpers and external images
+        uses: ./.github/actions/compat-build
+        with:
+          tier: blocking
+
+      - name: Run compatibility pair
+        run: >-
+          tests/compat/run-matrix.sh
+          --sender "${{ matrix.sender }}"
+          --receiver "${{ matrix.receiver }}"
+          --duration 20
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: compat-results-blocking-${{ matrix.sender }}-x-${{ matrix.receiver }}
+          path: tests/compat/results/**/result.json
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------- #
+  # Blocking gate — one stable status that fails if any blocking leg       #
+  # failed, so "a failing blocking pair fails this run" holds under one    #
+  # check name no matter how many pairs the matrix fans into.             #
+  # --------------------------------------------------------------------- #
+  compat-blocking-gate:
+    name: Blocking tier
+    needs: compat-blocking
+    if: always() && github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all blocking pairs to pass
+        env:
+          RESULT: ${{ needs.compat-blocking.result }}
+        run: |
+          echo "blocking matrix result: $RESULT"
+          [ "$RESULT" = "success" ] || {
+            echo "::error title=Blocking tier::one or more blocking compat pairs failed ($RESULT)"
+            exit 1
+          }
+
+  # --------------------------------------------------------------------- #
+  # Informational tier — same per-pair fan-out (pinned SHAs; a failure is  #
+  # a regression). Only materializes when matrix.yaml has informational    #
+  # pairs (has_informational guard).                                       #
+  # --------------------------------------------------------------------- #
+  compat-informational:
+    name: "informational: ${{ matrix.sender }} -> ${{ matrix.receiver }}"
+    needs: generate-matrix
+    if: github.event_name != 'schedule' && needs.generate-matrix.outputs.has_informational == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.generate-matrix.outputs.informational) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-compat-informational-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-compat-informational-
+
+      - name: Restore external image cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/compat-images
+          key: compat-images-${{ runner.os }}-amd64-informational-${{ hashFiles('tests/compat/matrix.yaml', 'tests/compat/gen-ci-matrix.sh', 'tests/compat/docker/**', 'tests/compat/moblin-mock/**', '.github/actions/compat-build/**') }}
+
+      - name: Build helpers and external images
+        uses: ./.github/actions/compat-build
+        with:
+          tier: informational
+
+      - name: Run compatibility pair
+        run: >-
+          tests/compat/run-matrix.sh
+          --sender "${{ matrix.sender }}"
+          --receiver "${{ matrix.receiver }}"
+          --duration 20
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: compat-results-informational-${{ matrix.sender }}-x-${{ matrix.receiver }}
+          path: tests/compat/results/**/result.json
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------- #
+  # Informational gate — stable status mirroring the blocking gate; passes #
+  # vacuously when no informational pairs are registered.                  #
+  # --------------------------------------------------------------------- #
+  compat-informational-gate:
+    name: Informational tier
+    needs: [generate-matrix, compat-informational]
+    if: always() && github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all informational pairs to pass
+        env:
+          RESULT: ${{ needs.compat-informational.result }}
+          HAS_INFO: ${{ needs.generate-matrix.outputs.has_informational }}
+        run: |
+          echo "informational matrix result: $RESULT (has_informational=$HAS_INFO)"
+          if [ "$HAS_INFO" != "true" ]; then
+            echo "No informational pairs registered; nothing to gate."
+            exit 0
+          fi
+          [ "$RESULT" = "success" ] || {
+            echo "::error title=Informational tier::one or more informational compat pairs failed ($RESULT)"
+            exit 1
+          }
+
+  # --------------------------------------------------------------------- #
+  # pcap replay — runs only when an LFS fixture is present. Missing        #
+  # fixture (or replay tool not yet wired) is a graceful skip, mirroring   #
+  # the replay tool's own exit-77 SKIP semantics.                          #
+  # --------------------------------------------------------------------- #
+  pcap-replay:
+    name: pcap replay
+    needs: generate-matrix
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          lfs: true
+
+      - name: Install ccache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-compat-pcap-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-compat-pcap-
+
+      - name: Configure bounded ccache
+        run: ccache -M "$CCACHE_MAXSIZE"
+
+      - name: Replay pcap fixtures (skip if absent)
+        run: |
+          shopt -s nullglob
+          fixtures=(tests/compat/fixtures/*.pcap tests/compat/fixtures/*.pcapng)
+
+          if [ "${#fixtures[@]}" -eq 0 ]; then
+            echo "::notice title=pcap replay::No LFS pcap fixture present; skipping (replay.sh exit-77 SKIP semantics)."
+            echo "pcap replay: SKIPPED (no fixture)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Fixture present: build srtla_rec (replay.py is stdlib-only) and replay.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git pkg-config libspdlog-dev
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build -j"$(nproc)" --target srtla_rec
+
+          set +e
+          tests/compat/pcap-replay/replay.sh
+          rc=$?
+          set -e
+          if [ "$rc" -eq 77 ]; then
+            echo "::notice title=pcap replay::Replay reported SKIP (exit 77)."
+            echo "pcap replay: SKIPPED (exit 77)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          exit "$rc"
+
+      - name: Enforce ccache bound
+        if: ${{ always() }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -c
+          fi
+
+  # --------------------------------------------------------------------- #
+  # Weekly upstream drift — informational tier against upstream HEADs.     #
+  # Pure detection: never blocks.                                          #
+  # --------------------------------------------------------------------- #
+  upstream-drift:
+    name: Weekly upstream drift
+    needs: generate-matrix
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-amd64-gcc-compat-drift-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-amd64-gcc-compat-drift-
+
+      - name: Build helpers and external images at upstream HEAD
+        uses: ./.github/actions/compat-build
+        with:
+          tier: informational
+          drift: "true"
+
+      - name: Run informational tier against upstream HEADs
+        run: |
+          echo "Weekly drift run: informational tier built against upstream HEAD." \
+            >> "$GITHUB_STEP_SUMMARY"
+          tests/compat/run-matrix.sh --tier informational --duration 20
+
+      - name: Upload drift results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: compat-results-drift
+          path: tests/compat/results/**/result.json
+          if-no-files-found: ignore

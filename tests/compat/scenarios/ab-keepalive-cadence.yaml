@@ -1,0 +1,104 @@
+# Pre-registered A/B campaign: srtla_rec recovery-keepalive cadence.
+#
+# FROZEN. The `rule:` block at the bottom is the decision procedure, copied
+# verbatim from the plan item that commissioned this campaign; it is the ONLY
+# thing allowed to pick a winner, and tests/compat/lib/ab-verdict.py is the only
+# thing allowed to apply it. Every threshold below is restated in that text, and
+# `ab-verdict.py --selftest` fails if the two ever disagree.
+#
+# The receiver behaviour under test is upstream-verbatim on arm A. Arm B is a
+# BUILD-TIME variant: the legacy cadence change lives as a patch file under
+# tests/compat/patches/ and is applied to a scratch build tree. It is
+# deliberately NOT committed to src/ — the fork ships upstream behaviour until
+# this campaign says otherwise.
+#
+# Not run by CI: needs a quiesced bench host with CAP_NET_ADMIN.
+
+schema_version: 1
+name: ab-keepalive-cadence
+question: >-
+  Does decoupling the receiver's recovery-keepalive cadence from the cleanup
+  throttle (probing a stalled uplink every KEEPALIVE_PERIOD instead of every
+  CLEANUP_PERIOD) actually help the SENDER keep and recover a bonded uplink?
+  Judged on sender-observed survival, re-registration count and recovery time.
+privileged: true
+instrument: tests/compat/scenarios/ab-campaign.sh
+group_key: scenario
+runs_per_group: 3
+
+stack:
+  sender:
+    repo: https://github.com/CERALIVE/srtla-send-rs
+    ref: upstream/v4
+  receiver:
+    repo: https://github.com/CERALIVE/srtla
+    ref: upstream/main
+  libsrt:
+    repo: https://github.com/CERALIVE/srt
+    ref: feat/srtla-options-1.5.7
+
+run:
+  duration_s: 60
+  impairment_start_s: 20
+  metrics_parser: tests/compat/lib/sender-log-metrics.py
+
+arms:
+  - id: A
+    label: upstream connection_registry.cpp (verbatim)
+    apply:
+      patch: null
+  - id: B
+    label: legacy recovery-keepalive cadence patch
+    apply:
+      patch: tests/compat/patches/d21-recovery-keepalive-cadence.patch
+
+groups:
+  - id: S1
+    label: link-drop
+    apply:
+      impairment: blackhole-bidirectional
+      target: uplink-1
+      duration_s: 10
+  - id: S2
+    label: receiver-restart
+    apply:
+      impairment: receiver-sigterm-restart
+      target: srtla_rec
+      restart_within_s: 2
+  - id: S3
+    label: nat-stall
+    apply:
+      impairment: blackhole-inbound-only
+      target: uplink-1
+      duration_s: 4
+
+metrics:
+  - survival
+  - rereg
+  - ttr_ms
+  - censored
+  - valid
+
+units:
+  survival: indicator_0_or_1
+  rereg: count
+  ttr_ms: milliseconds
+  censored: boolean
+
+decision:
+  kind: d21-survival-ttr
+  survival_margin: 0.10
+  ttr_ratio: 0.80
+  groups_required_for_b: 2
+
+verdict:
+  arm_a: upstream
+  arm_b: cadence-patch
+  winner_values:
+    A: A
+    B: B
+  default_winner: A
+  insufficient_runs_reason: insufficient_valid_runs
+
+rule: |
+  Scenarios per `ab-keepalive-cadence.yaml` (S1 link-drop: inbound+outbound on uplink-1 blackholed for 10 s; S2 receiver-restart: `srtla_rec` SIGTERM + restart within 2 s; S3 NAT-stall: inbound-only to uplink-1 dropped for 4 s). Each run lasts 60 s with impairment starting at t=20 s. Per run, from the SENDER's log (timestamps in ms): `survival` = 1 iff uplink-1 is in the sender's active pool at t=60 s AND no REG1 was sent for it after t=20 s, else 0; `rereg` = count of `REG3` acceptances for uplink-1 after t=20 s; `ttr_ms` = first `DATA` forwarded on uplink-1 minus impairment-end time; if no DATA is forwarded by t=60 s, `ttr_ms` = (60 s − impairment end) and the run is marked `censored=true` (counted at that maximum, not excluded). Per scenario and arm: MEDIAN over 3 valid runs of each metric. B "wins a scenario" iff `(median_survival_B − median_survival_A ≥ 0.10 OR median_ttr_B ≤ 0.80 × median_ttr_A) AND median_rereg_B ≤ median_rereg_A` (the re-registration guard applies to BOTH branches of the OR). WINNER = B iff B wins ≥ 2 of the 3 scenarios; otherwise A (upstream). Invalid run = harness error, missing metric, or capture < 90 % of the 60 s duration; re-run once; if any (arm, scenario) cannot reach 3 valid runs, WINNER = A and `reason = "insufficient_valid_runs"`. No other discretion exists.

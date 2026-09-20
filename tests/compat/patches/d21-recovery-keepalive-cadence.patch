@@ -1,0 +1,74 @@
+# D21 A/B — arm B: recovery-keepalive cadence decoupled from the cleanup throttle.
+#
+# BUILD-TIME VARIANT ONLY. This patch is deliberately NOT committed to src/: the
+# fork ships upstream srtla_rec behaviour verbatim, and this file exists so the
+# pre-registered ab-keepalive-cadence campaign can build the alternative arm in a
+# scratch tree and MEASURE it. It becomes a real source change only if the frozen
+# rule in tests/compat/scenarios/ab-keepalive-cadence.yaml elects arm B.
+#
+# What it changes: upstream fires the recovery/NAT keepalive from inside the
+# reaping body of ConnectionRegistry::cleanup_inactive, which self-throttles to
+# CLEANUP_PERIOD (3s). Across the 5s RECOVERY_CHANCE_PERIOD a stalled uplink
+# therefore gets ~2 probes instead of the ~5 the window implies. Arm B runs the
+# keepalive pass on every call, paced per connection by a new last-sent stamp.
+#
+# Apply from the repository root of a SCRATCH checkout:
+#   git apply --check tests/compat/patches/d21-recovery-keepalive-cadence.patch
+#   git apply         tests/compat/patches/d21-recovery-keepalive-cadence.patch
+#
+# Source of the change: the legacy srtla branch's connection_registry.cpp.
+# Note the files are CRLF in this tree; the patch preserves that.
+--- a/src/connection/connection.h
++++ b/src/connection/connection.h
+@@ -34,6 +34,12 @@
+     time_t recovery_start() const { return recovery_start_; }
+     void set_recovery_start(time_t ts) { recovery_start_ = ts; }
+ 
++    // Wall-clock second of the last outbound keepalive the reaper sent on this
++    // link. Lets cleanup_inactive pace recovery keepalives at KEEPALIVE_PERIOD
++    // independently of the CLEANUP_PERIOD reaping throttle.
++    time_t last_keepalive_sent() const { return last_keepalive_sent_; }
++    void set_last_keepalive_sent(time_t ts) { last_keepalive_sent_ = ts; }
++
+     time_t connection_start() const { return connection_start_; }
+ 
+     bool extensions_negotiated() const { return extensions_negotiated_; }
+@@ -50,6 +56,7 @@
+ 
+     ConnectionStats stats_ {};
+     time_t recovery_start_ = 0;
++    time_t last_keepalive_sent_ = 0;
+     time_t connection_start_ = 0;
+ 
+     bool extensions_negotiated_ = false;
+--- a/src/connection/connection_registry.cpp
++++ b/src/connection/connection_registry.cpp
+@@ -111,6 +111,28 @@
+ 
+ void ConnectionRegistry::cleanup_inactive(time_t current_time,
+                                           const std::function<void(ConnectionPtr, time_t)> &keepalive_cb) {
++    // Recovery/NAT keepalives must probe at KEEPALIVE_PERIOD (1s) cadence, but
++    // the reaping body below self-throttles to CLEANUP_PERIOD (3s); firing
++    // keepalives only from that body delivers ~2 of the intended ~5 probes
++    // across a 5s RECOVERY_CHANCE_PERIOD window. Run the keepalive pass on every
++    // call, decoupled from the reaping throttle. A per-connection last-sent stamp
++    // keeps the true cadence at one per KEEPALIVE_PERIOD even when the main loop
++    // polls cleanup_inactive many times in the same second.
++    if (keepalive_cb) {
++        for (auto &group : groups_) {
++            for (auto &conn : group->connections()) {
++                if (conn_timed_out(conn, current_time)) {
++                    continue;
++                }
++                if ((conn->last_received() + KEEPALIVE_PERIOD) < current_time &&
++                    (conn->last_keepalive_sent() + KEEPALIVE_PERIOD) <= current_time) {
++                    keepalive_cb(conn, current_time);
++                    conn->set_last_keepalive_sent(current_time);
++                }
++            }
++        }
++    }
++
+     static time_t last_run = 0;
+     if ((last_run + CLEANUP_PERIOD) > current_time) {
+         return;

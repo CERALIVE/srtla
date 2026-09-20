@@ -1,0 +1,5 @@
+# Track this directory but ignore ad-hoc captures. Only the canonical LFS
+# fixture (real-moblin.pcap, see ../CAPTURE.md) is committed; self-test
+# captures and stray pcaps stay local.
+*.pcap
+!real-moblin.pcap
