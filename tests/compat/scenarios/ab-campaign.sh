@@ -131,15 +131,17 @@ fi
 # --------------------------------------------------------------------------- #
 LOCK_KEY="$(printf '%s' "$REPO_ROOT" | sha256sum | cut -c1-12)"
 LOCK_FILE="${TMPDIR:-/tmp}/ab-campaign-${LOCK_KEY}-${SCENARIO}.lock"
-: >"$LOCK_FILE" 2>/dev/null || die "cannot create lock file ${LOCK_FILE}"
-exec 9>"$LOCK_FILE"
+# Never truncate the lock file before flock: a refused second launch must read
+# the holder's pid back intact, and only the winning holder writes it.
+: >>"$LOCK_FILE" 2>/dev/null || die "cannot create lock file ${LOCK_FILE}"
+exec 9<>"$LOCK_FILE"
 if ! flock -n 9; then
   holder="$(cat "$LOCK_FILE" 2>/dev/null || echo unknown)"
   printf 'ab-campaign: REFUSING to start a second %s campaign: lock %s is held (pid %s).\n' \
     "$SCENARIO" "$LOCK_FILE" "$holder" >&2
   exit 75
 fi
-printf '%s\n' "$$" >&9
+printf '%s\n' "$$" >"$LOCK_FILE"
 
 mkdir -p "${OUT_DIR}" || die "cannot create output dir ${OUT_DIR} (is tests/compat/results user-writable?)"
 
