@@ -626,8 +626,10 @@ ts_pkts="$(jq -r '.ts_packets // 0'      "$SINK_JSON" 2>/dev/null || echo 0)"
 pkt_loss="$(jq -r '.pkt_rcv_loss // 0'   "$SINK_JSON" 2>/dev/null || echo 0)"
 pkt_drop="$(jq -r '.pkt_rcv_drop // 0'   "$SINK_JSON" 2>/dev/null || echo 0)"
 pkt_retr="$(jq -r '.pkt_retrans // 0'    "$SINK_JSON" 2>/dev/null || echo 0)"
+pkt_total="$(jq -r '.pkt_rcv_total // 0' "$SINK_JSON" 2>/dev/null || echo 0)"
+pkt_uniq="$(jq -r '.pkt_rcv_unique // 0' "$SINK_JSON" 2>/dev/null || echo 0)"
 for v in ts_sync ts_cc; do [[ "${!v}" =~ ^-?[0-9]+$ ]] || printf -v "$v" '%s' -1; done
-for v in ts_pkts pkt_loss pkt_drop pkt_retr; do [[ "${!v}" =~ ^[0-9]+$ ]] || printf -v "$v" '%s' 0; done
+for v in ts_pkts pkt_loss pkt_drop pkt_retr pkt_total pkt_uniq; do [[ "${!v}" =~ ^[0-9]+$ ]] || printf -v "$v" '%s' 0; done
 
 # Goodput (delivered B/s) and forward-wire amplification (egress / delivered) —
 # the same two quantities ADR-002's pre-registered "equal" rule compares.
@@ -683,6 +685,7 @@ jq -n \
   --argjson ts_sync_errors "$ts_sync" --argjson ts_cc_errors "$ts_cc" \
   --argjson ts_packets "$ts_pkts" --argjson pkt_rcv_loss "$pkt_loss" \
   --argjson pkt_rcv_drop "$pkt_drop" --argjson pkt_retrans "$pkt_retr" \
+  --argjson pkt_rcv_total "$pkt_total" --argjson pkt_rcv_unique "$pkt_uniq" \
   --argjson goodput_bps "$goodput" --argjson wire_bytes "$wire_bytes" \
   --argjson wire_amp "$wire_amp" \
   --argjson reverse_wire_bytes "$reverse_wire_bytes" --argjson reverse_wire_amp "$reverse_wire_amp" \
@@ -708,7 +711,8 @@ jq -n \
              reverse_wire_bytes:$reverse_wire_bytes, reverse_wire_amp:$reverse_wire_amp,
              ts_packets:$ts_packets, ts_sync_errors:$ts_sync_errors,
              ts_cc_errors:$ts_cc_errors, pkt_rcv_loss:$pkt_rcv_loss,
-             pkt_rcv_drop:$pkt_rcv_drop, pkt_retrans:$pkt_retrans},
+             pkt_rcv_drop:$pkt_rcv_drop, pkt_retrans:$pkt_retrans,
+             pkt_rcv_total:$pkt_rcv_total, pkt_rcv_unique:$pkt_rcv_unique},
     reorder:{configured:$reorder_configured, phase_ii_pkts:$reorder_pkts,
              fast_delay_ms:$delay_a_ms, slow_delay_ms:$delay_b_ms,
              slow_delay_effective_ms:$delay_b_effective_ms,
