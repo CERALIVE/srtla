@@ -1,0 +1,52 @@
+{
+  "scenario": "ab-keepalive-cadence",
+  "arm_a": "upstream",
+  "arm_b": "cadence-patch",
+  "rule_sha256": "001627231a69858063cec124e465c782cd99f4f1bfbb04bb319c749e20a61f58",
+  "n": 3,
+  "scenarios": 3,
+  "winner": "A",
+  "scenarios_won_by_b": 0,
+  "reason": "B won 0/3 scenarios",
+  "groups": [
+    {
+      "id": "S1",
+      "median_survival_a": 1.0,
+      "median_survival_b": 1.0,
+      "median_ttr_ms_a": 1017.0,
+      "median_ttr_ms_b": 1018.0,
+      "median_rereg_a": 1.0,
+      "median_rereg_b": 1.0,
+      "survival_win": false,
+      "ttr_win": false,
+      "rereg_guard_ok": true,
+      "b_wins": false
+    },
+    {
+      "id": "S2",
+      "median_survival_a": 1.0,
+      "median_survival_b": 1.0,
+      "median_ttr_ms_a": 38000.0,
+      "median_ttr_ms_b": 38000.0,
+      "median_rereg_a": 1.0,
+      "median_rereg_b": 1.0,
+      "survival_win": false,
+      "ttr_win": false,
+      "rereg_guard_ok": true,
+      "b_wins": false
+    },
+    {
+      "id": "S3",
+      "median_survival_a": 1.0,
+      "median_survival_b": 1.0,
+      "median_ttr_ms_a": 16167.0,
+      "median_ttr_ms_b": 22335.0,
+      "median_rereg_a": 0.0,
+      "median_rereg_b": 0.0,
+      "survival_win": false,
+      "ttr_win": false,
+      "rereg_guard_ok": true,
+      "b_wins": false
+    }
+  ]
+}

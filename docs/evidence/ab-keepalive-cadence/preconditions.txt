@@ -1,0 +1,18 @@
+campaign=ab-keepalive-cadence
+instrument=tests/compat/scenarios/keepalive-cadence.sh
+metrics_parser=/mnt/development/ceralive/srtla/tests/compat/lib/sender-log-metrics.py
+instrument_out=/mnt/development/ceralive/srtla/tests/compat/results/keepalive-cadence
+build_dir=/mnt/development/ceralive/srtla/build
+sink_lib=/mnt/development/ceralive/srtla/test-results/libsrt-matrix/install/patched/lib
+sender_bin=/tmp/sender-v4.1.0/extract/usr/bin/srtla_send sha256=6ae3aca874ea24d41cab7596b17c7e26daf72afadb932a73edbafb35ee1b741d
+sink_image=<none: campaign measures the sender log>
+duration_s=60
+impairment_start_s=20
+netem_seed=20260920
+lock=/tmp/ab-campaign-ffab3e4a4b0d-ab-keepalive-cadence.lock
+receiver_B=/mnt/development/ceralive/srtla/tests/compat/results/ab-keepalive-cadence/receiver-build/B/srtla_rec sha256=7d1419dbecd3165c12e452c276b83f8a1d5a841befff60e4b7d52f2dece936e2
+receiver_A=/mnt/development/ceralive/srtla/build/srtla_rec sha256=c770ed03dc360459a598009fb6a156bbf03b82b1c1651bba38c748f9b3a4c52a
+--- df -B1 ---
+Filesystem           1B-blocks          Used   Available Use% Mounted on
+/dev/mapper/root  484742127616  379056693248 80986701824  83% /
+/dev/nvme0n1p2   1354053271552 1270063841280 70204473344  95% /mnt/development

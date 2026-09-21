@@ -1,0 +1,200 @@
+[
+  {
+    "arm": "A",
+    "scenario": "S1",
+    "run": 1,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 1017,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0154
+  },
+  {
+    "arm": "A",
+    "scenario": "S1",
+    "run": 2,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 2006,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0157
+  },
+  {
+    "arm": "A",
+    "scenario": "S1",
+    "run": 3,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 1005,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0155
+  },
+  {
+    "arm": "A",
+    "scenario": "S2",
+    "run": 1,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 38000,
+    "censored": true,
+    "valid": true,
+    "capture_coverage": 1.0152
+  },
+  {
+    "arm": "A",
+    "scenario": "S2",
+    "run": 2,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 25,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0148
+  },
+  {
+    "arm": "A",
+    "scenario": "S2",
+    "run": 3,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 38000,
+    "censored": true,
+    "valid": true,
+    "capture_coverage": 1.0165
+  },
+  {
+    "arm": "A",
+    "scenario": "S3",
+    "run": 1,
+    "survival": 1,
+    "rereg": 0,
+    "ttr_ms": 16167,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.015
+  },
+  {
+    "arm": "A",
+    "scenario": "S3",
+    "run": 2,
+    "survival": 1,
+    "rereg": 0,
+    "ttr_ms": 4063,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0155
+  },
+  {
+    "arm": "A",
+    "scenario": "S3",
+    "run": 3,
+    "survival": 1,
+    "rereg": 0,
+    "ttr_ms": 19959,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0156
+  },
+  {
+    "arm": "B",
+    "scenario": "S1",
+    "run": 1,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 2009,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0152
+  },
+  {
+    "arm": "B",
+    "scenario": "S1",
+    "run": 2,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 1018,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0155
+  },
+  {
+    "arm": "B",
+    "scenario": "S1",
+    "run": 3,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 1003,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0152
+  },
+  {
+    "arm": "B",
+    "scenario": "S2",
+    "run": 1,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 805,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0167
+  },
+  {
+    "arm": "B",
+    "scenario": "S2",
+    "run": 2,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 38000,
+    "censored": true,
+    "valid": true,
+    "capture_coverage": 1.0159
+  },
+  {
+    "arm": "B",
+    "scenario": "S2",
+    "run": 3,
+    "survival": 1,
+    "rereg": 1,
+    "ttr_ms": 38000,
+    "censored": true,
+    "valid": true,
+    "capture_coverage": 1.0166
+  },
+  {
+    "arm": "B",
+    "scenario": "S3",
+    "run": 1,
+    "survival": 1,
+    "rereg": 0,
+    "ttr_ms": 36000,
+    "censored": true,
+    "valid": true,
+    "capture_coverage": 1.0157
+  },
+  {
+    "arm": "B",
+    "scenario": "S3",
+    "run": 2,
+    "survival": 1,
+    "rereg": 0,
+    "ttr_ms": 22335,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0155
+  },
+  {
+    "arm": "B",
+    "scenario": "S3",
+    "run": 3,
+    "survival": 1,
+    "rereg": 0,
+    "ttr_ms": 63,
+    "censored": false,
+    "valid": true,
+    "capture_coverage": 1.0155
+  }
+]
