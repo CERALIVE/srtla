@@ -19,7 +19,7 @@ name: Compatibility Matrix
 on:
   workflow_dispatch:
   push:
-    branches: [upstream/main]
+    branches: [main]
     paths:
       - "src/**"
       - "CMakeLists.txt"
@@ -27,7 +27,7 @@ on:
       - ".github/workflows/compat-matrix.yml"
       - ".github/actions/compat-build/**"
   pull_request:
-    branches: [upstream/main]
+    branches: [main]
     types: [opened, synchronize, reopened, labeled]
     paths:
       - "src/**"

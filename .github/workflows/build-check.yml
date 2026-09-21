@@ -2,9 +2,9 @@ name: Build Check
 
 on:
   push:
-    branches: [upstream/main]
+    branches: [main]
   pull_request:
-    branches: [upstream/main]
+    branches: [main]
 
 permissions:
   contents: read
