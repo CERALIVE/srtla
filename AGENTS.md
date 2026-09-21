@@ -22,8 +22,9 @@ What CERALIVE adds, and nothing else:
 
 ## UPSTREAM RELATIONSHIP
 
-Fork base: upstream `b8359bc80ce99ac4fc8f603cfa455cdd0a0a4241`. The invariant that
-every PR must keep:
+Fork base: upstream `b8359bc80ce99ac4fc8f603cfa455cdd0a0a4241`, which is also the
+last-merged upstream SHA; the next sync's merge base is computed from it. The invariant
+that every PR must keep:
 
 ```bash
 git diff --stat b8359bc80ce99ac4fc8f603cfa455cdd0a0a4241..HEAD -- src/   # prints nothing
