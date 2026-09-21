@@ -6,24 +6,25 @@
 # ----------
 # Every external implementation is addressed by EXACTLY ONE of:
 #   pin: <40-hex sha>   an immutable commit (third-party upstreams — never moves)
-#   ref: <branch|tag>   a moving CERALIVE ref (our own hard-fork branches, which
-#                       are still advancing and are renamed/tagged by a later
-#                       step; a 40-hex pin here would go stale on every push).
+#   ref: <branch|tag>   a CERALIVE canonical branch or published release tag.
+#                       Branch refs follow source development; release tags
+#                       select the published dependency revision.
 # validate-matrix.py enforces the "exactly one" rule; gen-ci-matrix.sh feeds
 # whichever is present to the image's first `ARG` as the build ref.
 
 # The libsrt build the A/B scenarios link srt-sink against. CERALIVE/srt carries
 # the SRTLA option set (SRTO_SRTLAPATCHES = 118, SRTO_PERIODICNAKGATE = 119) that
-# scenarios/ab-periodic-nak.yaml measures. Not yet tagged or released, so it is a
-# branch ref; lib/build-libsrt-matrix.sh defaults to this pair.
+# scenarios/ab-periodic-nak.yaml measures. The released tag is the default for
+# new builds; completed campaigns retain their original recorded provenance.
+# lib/build-libsrt-matrix.sh defaults to this pair.
 srt:
   repo: https://github.com/CERALIVE/srt
-  ref: feat/srtla-options-1.5.7
+  ref: srt-v1.5.7+ceralive.2
   notes: >-
     Haivision v1.5.7 + the CERALIVE SRTLA option set. Provides
     SRTO_PERIODICNAKGATE as a tri-state (0 off / 1 filter / 2 suppress) — the
-    two arms of the ab-periodic-nak scenario. Replace `ref` with `pin` once
-    srt-v1.5.7+ceralive.2 is tagged.
+    two arms of the ab-periodic-nak scenario. The published release retains
+    the D10 winner, value 2 (suppress), as the SRTLAPATCHES default.
 
 # Declared cardinality of the pair table. validate-matrix.py checks the actual
 # pair list against these so an accidental addition or deletion is caught, while
@@ -60,7 +61,7 @@ senders:
 
   - name: ceralive-srtla-send-rs
     repo: https://github.com/CERALIVE/srtla-send-rs
-    ref: upstream/v4
+    ref: main
     role: sender
     build: docker/ceralive-srtla-send-rs/Dockerfile
     tier: blocking
@@ -68,9 +69,8 @@ senders:
       CERALIVE Rust srtla_send, hard-forked onto the irlserver upstream base.
       Built FROM SOURCE at the `ref` above inside the compat image — this repo
       consumes no sender release artifact and no .deb, so the pair cannot drift
-      away from the branch under test. The branch is renamed to `main` by the
-      canonical-swap step; update `ref` (or replace it with `pin`/a release tag)
-      in the same change. CLI is positional-compatible with the C sender
+      away from the canonical `main` branch under test.
+      CLI is positional-compatible with the C sender
       (SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT IPS_FILE). The receiver stays the C
       srtla_rec.
 

@@ -34,7 +34,7 @@
 #   ldd must resolve libsrt.so.* into the chosen prefix (not /usr/local/lib).
 #
 # ─ Keeping the delta honest ─────────────────────────────────────────────────
-#   V defaults to Haivision's v1.5.7 tag and P to the CERALIVE branch built on
+#   V defaults to Haivision's v1.5.7 tag and P to the CERALIVE release tag built on
 #   it, so the delta is the CERALIVE option set and nothing else. If you move
 #   either ref, move both to a matched base — a V and P sitting on different
 #   upstream bases makes every measured difference uninterpretable.
@@ -44,8 +44,7 @@
 #     --vanilla-url <url>   default https://github.com/Haivision/srt
 #     --vanilla-ref <ref>   sha/tag/branch; default: v1.5.7
 #     --patched-url <url>   default https://github.com/CERALIVE/srt
-#     --patched-ref <ref>   sha/tag/branch; default: feat/srtla-options-1.5.7
-#                           (replace with the srt-v1.5.7+ceralive.2 tag once cut)
+#     --patched-ref <ref>   sha/tag/branch; default: srt-v1.5.7+ceralive.2
 #     --only <which>        both (default) | patched | vanilla. A campaign whose
 #                           arms differ only in a runtime SRT option needs the
 #                           patched build alone; "both" additionally proves the
@@ -71,7 +70,7 @@ MANIFEST="${OUT_DIR}/manifest.txt"
 VANILLA_URL="https://github.com/Haivision/srt"
 VANILLA_REF="v1.5.7"
 PATCHED_URL="https://github.com/CERALIVE/srt"
-PATCHED_REF="feat/srtla-options-1.5.7"
+PATCHED_REF="srt-v1.5.7+ceralive.2"
 ONLY="both"
 JOBS="$(nproc 2>/dev/null || echo 4)"
 

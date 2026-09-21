@@ -5,8 +5,7 @@
 # a compat run can never silently measure a stale published binary.
 #
 # The default REF tracks the ceralive-srtla-send-rs entry in
-# tests/compat/matrix.yaml. It is a BRANCH, not a SHA, because the hard-fork
-# sender branch is still advancing and is renamed by the canonical-swap step;
+# tests/compat/matrix.yaml. It follows the sender's canonical main branch;
 # gen-ci-matrix.sh passes the registry value through as --build-arg REF=<value>,
 # so pinning later is a matrix.yaml edit with no Dockerfile change.
 #
@@ -19,7 +18,7 @@
 # rather than silently overridden. build.rs shells out to `git rev-parse`, so
 # the cloned .git stays available during `cargo build`.
 
-ARG REF=upstream/v4
+ARG REF=main
 
 # --- build stage -----------------------------------------------------------
 FROM rust:1.88-slim-bookworm AS builder
