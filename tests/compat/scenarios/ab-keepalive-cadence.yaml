@@ -22,7 +22,7 @@ question: >-
   CLEANUP_PERIOD) actually help the SENDER keep and recover a bonded uplink?
   Judged on sender-observed survival, re-registration count and recovery time.
 privileged: true
-instrument: tests/compat/scenarios/ab-campaign.sh
+instrument: tests/compat/scenarios/keepalive-cadence.sh
 group_key: scenario
 runs_per_group: 3
 
@@ -40,6 +40,7 @@ stack:
 run:
   duration_s: 60
   impairment_start_s: 20
+  instrument_out: tests/compat/results/keepalive-cadence
   metrics_parser: tests/compat/lib/sender-log-metrics.py
 
 arms:

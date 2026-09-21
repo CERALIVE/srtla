@@ -59,6 +59,7 @@ BUILD_DIR="${SRTLA_BUILD_DIR:-}"
 SINK_LIB=""
 SENDER_BIN="${SRTLA_SEND_RS_BIN:-}"
 DURATION=14
+DURATION_SET=0
 SEED=20260920
 DISK_FLOOR_BYTES=60000000000
 
@@ -71,7 +72,7 @@ while [[ $# -gt 0 ]]; do
     --build-dir)  BUILD_DIR="${2:?--build-dir needs a value}"; shift 2 ;;
     --sink-lib)   SINK_LIB="${2:?--sink-lib needs a value}"; shift 2 ;;
     --sender-bin) SENDER_BIN="${2:?--sender-bin needs a value}"; shift 2 ;;
-    --duration)   DURATION="${2:?--duration needs a value}"; shift 2 ;;
+    --duration)   DURATION="${2:?--duration needs a value}"; DURATION_SET=1; shift 2 ;;
     --seed)       SEED="${2:?--seed needs a value}"; shift 2 ;;
     --keep-logs)  shift ;;
     -h|--help)    sed -n '2,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -91,6 +92,35 @@ DOC="${COMPAT_DIR}/scenarios/${SCENARIO}.yaml"
 
 command -v python3 >/dev/null 2>&1 || die "python3 is required"
 command -v jq      >/dev/null 2>&1 || die "jq is required"
+
+# --------------------------------------------------------------------------- #
+# The scenario document drives the instrument output dir, the metrics parser,   #
+# the per-run duration and whether a sink image is a precondition. Reading them #
+# here keeps the driver campaign-agnostic: a campaign that measures receiver    #
+# counters (D10) and one that measures the sender's log (D21) differ only in    #
+# the document, not in this script.                                             #
+# --------------------------------------------------------------------------- #
+read -r DOC_DURATION INSTRUMENT_OUT_ABS PARSER_ABS IMPAIRMENT_START_S HAS_SINK < <(
+  python3 - "$DOC" "$REPO_ROOT" <<'PY'
+import sys
+import yaml
+
+doc = yaml.safe_load(open(sys.argv[1]))
+repo = sys.argv[2]
+run = doc.get("run") or {}
+
+def absify(path: str) -> str:
+    return path if path.startswith("/") else f"{repo}/{path}"
+
+out = absify(run.get("instrument_out") or "tests/compat/results/reorder-stress")
+parser = absify(run.get("metrics_parser") or "tests/compat/lib/ab-row-metrics.py")
+has_sink = "1" if (doc.get("stack") or {}).get("sink") else "0"
+print(run.get("duration_s", 0) or 0, out, parser, run.get("impairment_start_s", 0) or 0, has_sink)
+PY
+) || die "could not read the run config from ${DOC}"
+
+[[ "$DURATION_SET" -eq 1 || "$DOC_DURATION" == "0" ]] || DURATION="$DOC_DURATION"
+[[ -f "$PARSER_ABS" ]] || die "metrics parser '${PARSER_ABS}' not found"
 
 if [[ "$MODE" == "rule" ]]; then
   exec python3 "${COMPAT_DIR}/lib/ab-verdict.py" --print-rule "$DOC"
@@ -156,7 +186,6 @@ disk_avail() { df -B1 --output=avail "$1" 2>/dev/null | tail -1 | tr -d ' '; }
 [[ -x "${BUILD_DIR}/tests/compat/srt-sink/srt-sink" ]] || die "${BUILD_DIR}/tests/compat/srt-sink/srt-sink missing (rebuild with -DBUILD_COMPAT_TESTS=ON)"
 [[ -d "$SINK_LIB" ]] || die "sink libsrt dir '$SINK_LIB' missing (tests/compat/lib/build-libsrt-matrix.sh --only patched)"
 command -v sudo >/dev/null 2>&1 || die "sudo is required (the instrument needs CAP_NET_ADMIN)"
-command -v docker >/dev/null 2>&1 || die "docker is required (sink precondition)"
 
 for mnt in / /mnt/development; do
   avail="$(disk_avail "$mnt")"
@@ -164,7 +193,13 @@ for mnt in / /mnt/development; do
   (( avail >= DISK_FLOOR_BYTES )) || die "disk floor: $mnt has ${avail} B free (< ${DISK_FLOOR_BYTES})"
 done
 
-python3 - "$DOC" "$OUT_DIR/preconditions.txt" <<'PY' || die "sink precondition failed"
+# A sink image is a precondition only for a campaign whose document declares one
+# (D10). A sender-log campaign (D21) has no Docker sink on the measured path.
+SINK_IMAGE=""
+SINK_SHA=""
+if [[ "$HAS_SINK" == "1" ]]; then
+  command -v docker >/dev/null 2>&1 || die "docker is required (sink precondition)"
+  SINK_PRECOND="$(python3 - "$DOC" <<'PY' || die "sink precondition failed"
 import sys
 import yaml
 
@@ -174,11 +209,13 @@ if sink.get("resolved") is not True:
     sys.exit(f"scenario sink is unresolved: {sink}")
 if not sink.get("image") or not sink.get("image_sha256"):
     sys.exit(f"scenario sink has no recorded image/sha256: {sink}")
-open(sys.argv[2], "w").write(f"{sink['image']}\t{sink['image_sha256']}\n")
+print(f"{sink['image']}\t{sink['image_sha256']}")
 PY
-IFS=$'\t' read -r SINK_IMAGE SINK_SHA < "$OUT_DIR/preconditions.txt"
-docker image inspect "$SINK_IMAGE" >/dev/null 2>&1 \
-  || die "recorded sink image '$SINK_IMAGE' is not present on this host"
+)"
+  IFS=$'\t' read -r SINK_IMAGE SINK_SHA <<<"$SINK_PRECOND"
+  docker image inspect "$SINK_IMAGE" >/dev/null 2>&1 \
+    || die "recorded sink image '$SINK_IMAGE' is not present on this host"
+fi
 
 INSTRUMENT_REL="$(python3 - "$DOC" <<'PY'
 import sys, yaml
@@ -188,22 +225,69 @@ PY
 INSTRUMENT="${REPO_ROOT}/${INSTRUMENT_REL}"
 [[ -f "$INSTRUMENT" ]] || die "instrument '$INSTRUMENT_REL' not found"
 
+# --------------------------------------------------------------------------- #
+# Per-arm receiver build. An arm whose `apply.patch` is non-null is a           #
+# BUILD-TIME variant: the patch is applied to a scratch source tree (never to   #
+# the checkout) and the resulting srtla_rec is selected for that arm's runs via  #
+# SRTLA_REC_BIN. Arms without a patch share the base build dir's receiver.      #
+# --------------------------------------------------------------------------- #
+declare -A ARM_RECEIVER=()
+ARM_BUILD_INFO="$(python3 - "$DOC" <<'PY' || die "could not read the arm patch map"
+import sys
+import yaml
+
+doc = yaml.safe_load(open(sys.argv[1]))
+for arm in doc["arms"]:
+    patch = (arm.get("apply") or {}).get("patch")
+    print(f"{arm['id']}\t{patch if patch else ''}")
+PY
+)"
+if [[ -n "$ARM_BUILD_INFO" ]]; then
+  while IFS=$'\t' read -r arm_id patch_rel; do
+    [[ -n "$arm_id" ]] || continue
+    if [[ -z "$patch_rel" ]]; then
+      ARM_RECEIVER[$arm_id]="${BUILD_DIR}/srtla_rec"
+      log "arm ${arm_id}: receiver=${ARM_RECEIVER[$arm_id]} (unpatched)"
+    else
+      patch_abs="$patch_rel"
+      [[ "$patch_abs" = /* ]] || patch_abs="${REPO_ROOT}/${patch_rel}"
+      [[ -f "$patch_abs" ]] || die "arm ${arm_id} patch '${patch_abs}' not found"
+      out="${OUT_DIR}/receiver-build/${arm_id}/srtla_rec"
+      log "arm ${arm_id}: building patched receiver from ${patch_rel}"
+      bash "${COMPAT_DIR}/lib/build-receiver-variant.sh" \
+        --repo "$REPO_ROOT" --patch "$patch_abs" --out "$out" \
+        || die "could not build the receiver variant for arm ${arm_id}"
+      ARM_RECEIVER[$arm_id]="$out"
+      log "arm ${arm_id}: receiver=${out} (patched)"
+    fi
+  done <<< "$ARM_BUILD_INFO"
+fi
+
 {
   echo "campaign=${SCENARIO}"
   echo "instrument=${INSTRUMENT_REL}"
+  echo "metrics_parser=${PARSER_ABS}"
+  echo "instrument_out=${INSTRUMENT_OUT_ABS}"
   echo "build_dir=${BUILD_DIR}"
   echo "sink_lib=${SINK_LIB}"
   echo "sender_bin=${SENDER_BIN} sha256=$(sha256sum "$SENDER_BIN" | awk '{print $1}')"
-  echo "sink_image=${SINK_IMAGE}"
-  echo "sink_image_sha256=${SINK_SHA}"
+  if [[ "$HAS_SINK" == "1" ]]; then
+    echo "sink_image=${SINK_IMAGE}"
+    echo "sink_image_sha256=${SINK_SHA}"
+  else
+    echo "sink_image=<none: campaign measures the sender log>"
+  fi
   echo "duration_s=${DURATION}"
+  echo "impairment_start_s=${IMPAIRMENT_START_S}"
   echo "netem_seed=${SEED}"
   echo "lock=${LOCK_FILE}"
+  for arm_id in "${!ARM_RECEIVER[@]}"; do
+    echo "receiver_${arm_id}=${ARM_RECEIVER[$arm_id]} sha256=$(sha256sum "${ARM_RECEIVER[$arm_id]}" | awk '{print $1}')"
+  done
   echo "--- df -B1 ---"
   df -B1 / /mnt/development
 } | tee "$OUT_DIR/preconditions.txt"
 
-REORDER_OUT="${COMPAT_DIR}/results/reorder-stress"
 RUNS_DIR="${OUT_DIR}/runs"
 ATTEMPT_LOG="${OUT_DIR}/attempts.log"
 ROWS_TMP="${OUT_DIR}/rows.ndjson"
@@ -240,6 +324,8 @@ while IFS=$'\t' read -r arm cell run env_json; do
       PATH="$PATH" \
       SINK_LD_LIBRARY_PATH="$SINK_LIB" \
       SRTLA_SEND_RS_BIN="$SENDER_BIN" \
+      SRTLA_REC_BIN="${ARM_RECEIVER[$arm]:-${BUILD_DIR}/srtla_rec}" \
+      IMPAIRMENT_START_S="$IMPAIRMENT_START_S" \
       REQUIRE_RS_SENDER=1 \
       PROFILE_LABEL="$label" \
       NETEM_SEED="$SEED" \
@@ -247,14 +333,24 @@ while IFS=$'\t' read -r arm cell run env_json; do
       bash "$INSTRUMENT" --build-dir "$BUILD_DIR" --duration "$DURATION" --keep-logs \
       </dev/null >>"$ATTEMPT_LOG" 2>&1
     rc=$?
-    sudo -n chmod -R a+rX "$REORDER_OUT" 2>/dev/null || true
-    cp "${REORDER_OUT}/result.json" "${RUNS_DIR}/${label}.result.json" 2>/dev/null || true
+    sudo -n chmod -R a+rX "$INSTRUMENT_OUT_ABS" 2>/dev/null || true
+    cp "${INSTRUMENT_OUT_ABS}/result.json" "${RUNS_DIR}/${label}.result.json" 2>/dev/null || true
     mkdir -p "${RUNS_DIR}/${label}.logs"
-    cp -r "${REORDER_OUT}/." "${RUNS_DIR}/${label}.logs/" 2>/dev/null || true
-    row="$(python3 "${COMPAT_DIR}/lib/ab-row-metrics.py" \
-      --result "${REORDER_OUT}/result.json" --exit-code "$rc" \
-      --expected-ms "$EXPECTED_MS" --arm "$arm" --cell "$cell" --run "$run")" \
-      || die "per-run metric extraction failed for ${label}"
+    cp -r "${INSTRUMENT_OUT_ABS}/." "${RUNS_DIR}/${label}.logs/" 2>/dev/null || true
+    # The row extractor is chosen by the document's declared parser: D10 reads
+    # receiver counters out of result.json, D21 reads the sender's log through
+    # the same result.json (its path + window live there).
+    if [[ "$(basename "$PARSER_ABS")" == "sender-log-metrics.py" ]]; then
+      row="$(python3 "$PARSER_ABS" \
+        --result "${INSTRUMENT_OUT_ABS}/result.json" --exit-code "$rc" \
+        --arm "$arm" --scenario "$cell" --run "$run")" \
+        || die "per-run metric extraction failed for ${label}"
+    else
+      row="$(python3 "$PARSER_ABS" \
+        --result "${INSTRUMENT_OUT_ABS}/result.json" --exit-code "$rc" \
+        --expected-ms "$EXPECTED_MS" --arm "$arm" --cell "$cell" --run "$run")" \
+        || die "per-run metric extraction failed for ${label}"
+    fi
     printf '%s rc=%s %s\n' "$label" "$rc" "$row" >> "$ATTEMPT_LOG"
     if [[ "$(jq -r '.valid' <<<"$row")" == "true" ]]; then
       break

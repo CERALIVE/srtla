@@ -44,15 +44,26 @@ FIXTURE_DIR = COMPAT_DIR / "fixtures" / "sender-log"
 
 MIN_CAPTURE_COVERAGE = 0.90
 
+# tracing writes ANSI color codes even when redirected to a file, so the raw
+# capture would never match an anchored timestamp. Strip them before matching.
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
 TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+)Z?")
 
+# The hard-fork sender labels a connection "<receiver> via <source>", e.g.
+#   127.0.0.1:5501 via 127.0.0.2
+# so the uplink identity is the token after " via ". The fixtures and the
+# selftest encode this exact format; re-validate it against the sender under
+# test as a campaign precondition (a marker that stops matching surfaces as an
+# invalid run, never as a favourable number).
 MARKERS = {
     "reg1": re.compile(r"REG1 (?:→|->) uplink #(?P<idx>\d+)"),
     "reg3": re.compile(r"REG3 from uplink #(?P<idx>\d+)"),
     "selected": re.compile(
-        r"(?:Initial connection selected: |Connection switch: .* (?:→|->) )(?P<label>\S+)"
+        r"(?:Initial connection selected: |Connection switch: .* (?:→|->) )"
+        r"\S+ via (?P<label>\S+)"
     ),
-    "status": re.compile(r"\[(?P<idx>\d+)\] (?P<state>ACTIVE|TIMED_OUT) (?P<label>\S+)"),
+    "status": re.compile(r"\[(?P<idx>\d+)\] (?P<state>ACTIVE|TIMED_OUT) \S+ via (?P<label>\S+)"),
 }
 
 
@@ -80,7 +91,8 @@ def extract(
     last_status_state: str | None = None
     saw_debug_markers = False
 
-    for line in log_text.splitlines():
+    for raw_line in log_text.splitlines():
+        line = ANSI.sub("", raw_line)
         stamp = parse_timestamp_ms(line)
         if stamp is None:
             continue
@@ -186,6 +198,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="D21 sender-log metric extraction")
     parser.add_argument("--selftest", action="store_true")
     parser.add_argument("--log", type=Path)
+    parser.add_argument("--result", type=Path,
+                        help="instrument result.json (carries the log path and the windows); "
+                             "used by ab-campaign.sh, an alternative to --log/--uplink-label")
+    parser.add_argument("--exit-code", type=int,
+                        help="instrument exit code; anything but 0/1 marks the row invalid")
     parser.add_argument("--uplink-index", type=int, default=1)
     parser.add_argument("--uplink-label", default="")
     parser.add_argument("--impairment-start-ms", type=int, default=20_000)
@@ -198,8 +215,12 @@ def main() -> int:
 
     if args.selftest:
         return selftest()
+
+    if args.result is not None:
+        return emit_from_result(args)
+
     if not args.log or not args.uplink_label:
-        parser.error("need --log and --uplink-label (or --selftest)")
+        parser.error("need --log and --uplink-label (or --result, or --selftest)")
 
     row = extract(
         args.log.read_text(encoding="utf-8"),
@@ -214,6 +235,48 @@ def main() -> int:
             row = {key: value, **row}
     print(json.dumps(row))
     return 0
+
+
+def emit_from_result(args: argparse.Namespace) -> int:
+    """Emit one row from an instrument result.json (the ab-campaign.sh path).
+
+    A missing/unreadable result, a `skipped` run, or an exit code outside {0,1}
+    is an INVALID row — never a favourable zero. `ab-campaign.sh` retries an
+    invalid row once and, if it cannot reach `runs_per_group`, the frozen
+    insufficiency rule elects the default winner rather than inventing one.
+    """
+    base = {"arm": args.arm, "scenario": args.scenario, "run": args.run}
+    blank = {"survival": None, "rereg": None, "ttr_ms": None, "censored": None, "valid": False}
+
+    result: dict[str, Any] | None
+    try:
+        result = json.loads(args.result.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        result = None
+    if (
+        result is None
+        or result.get("skipped") is True
+        or args.exit_code not in (0, 1)
+    ):
+        print(json.dumps({**base, **blank}))
+        return 0
+
+    try:
+        log_path = Path(result["sender_log"])
+        label = result["uplink_label"]
+        index = int(result.get("uplink_index", 1))
+        start = int(result["impairment_start_ms"])
+        end = int(result["impairment_end_ms"])
+        duration = int(result["duration_ms"])
+        log_text = log_path.read_text(encoding="utf-8")
+    except (KeyError, OSError, TypeError, ValueError):
+        print(json.dumps({**base, **blank}))
+        return 0
+
+    row = extract(log_text, index, label, start, end, duration)
+    print(json.dumps({**base, **row}))
+    return 0
+
 
 
 if __name__ == "__main__":
