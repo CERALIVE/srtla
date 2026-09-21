@@ -19,7 +19,7 @@ For protocol internals and the handshake flow, see [`HOW_IT_WORKS.md`](HOW_IT_WO
 | BELABOX/srtla | C | sender + receiver | `pin` `6f3925e` (oldest srtla2) | 1 (reference) |
 | irlserver/srtla | C++ | receiver | this repo's fork base `b8359bc` | 1 (upstream base) |
 | irlserver/srtla_send | Rust | sender | `pin` `ef95926` | 1 (extended-KA sender) |
-| CERALIVE/srtla-send-rs | Rust | sender | `ref` (the hard-fork branch, later `main`) | 1 (shipping sender) |
+| CERALIVE/srtla-send-rs | Rust | sender | `ref: main` (canonical branch) | 1 (shipping sender) |
 | eerimoq/moblin | Swift | sender (iOS) | `pin` `0ae5294`, exercised via `moblin-mock` | 1 (real-world client) |
 | OpenIRL/srtla-receiver | Shell/C | receiver | `pin` `d8fd677` (srtla_rec component only) | 1 (Docker wrapper) |
 | e04/go-srtla | Go | receiver | `pin` `8a3b55b` | 2 (Go receiver, minimal) |
@@ -29,8 +29,8 @@ For protocol internals and the handshake flow, see [`HOW_IT_WORKS.md`](HOW_IT_WO
 Tier 1 = must pass in CI (the `blocking` pairs). Tier 2 = should pass (`informational`).
 
 Every third-party implementation is addressed by an immutable 40-hex `pin:`; CERALIVE's
-own branches use a moving `ref:` because a later step renames or tags them, and a SHA
-there would go stale on every push. `tests/compat/validate-matrix.py` enforces
+sender uses `ref: main` to follow source development, and the libsrt build default uses
+the published `srt-v1.5.7+ceralive.2` tag. `tests/compat/validate-matrix.py` enforces
 "exactly one of the two". Update `matrix.yaml` when refreshing; do not edit pins here.
 
 The pairs the matrix runs: every Tier 1 sender against **our** receiver, our receiver's

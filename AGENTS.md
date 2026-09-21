@@ -70,8 +70,10 @@ of `tests/CMakeLists.txt`. Do not "fix" one of those by growing `src/`.
 | `compat-matrix.yml` | `harness-selftest`, `hosted-jitter`, `generate-matrix`, `compat-blocking` + gate, `compat-informational` + gate, `pcap-replay`, `upstream-drift` | matrix generated from `matrix.yaml` |
 | `build-and-push.yml` | GHCR `ghcr.io/ceralive/srtla:<sha>` + `:latest` on push to `main` | upstream's file, byte-identical |
 
-`branches:` filters currently say `upstream/main`; the canonical-swap step renames the
-branch to `main` and flips them in the same change. `tests/workflow-contracts.sh` asserts
+The canonical and default branch is `main`; the former canonical history is retained
+on `legacy`. All three gate workflows filter pushes and pull requests to `[main]`.
+There is no `ci.yml`: the build gate is `build-check.yml` (display name `Build Check`).
+`tests/workflow-contracts.sh` asserts
 the workflow shapes (ccache bound and keys, permissions, job graph, the hosted-jitter
 provenance pins); the negative script mutates each assertion and requires it to fail.
 Do not weaken a job to get green, and do not add a workflow that publishes anything.
@@ -80,12 +82,17 @@ Do not weaken a job to get green, and do not add a workflow that publishes anyth
 
 - `matrix.yaml` is the **single registry**: senders, receivers, pairs, scenarios,
   `ab_campaigns`, `invariants`. Every entry is addressed by exactly one of `pin:`
-  (40-hex, third-party, immutable) or `ref:` (a moving CERALIVE branch that a later
-  step renames or tags). `validate-matrix.py` enforces the rule and the declared pair
+  (40-hex, third-party, immutable) or `ref:` (a CERALIVE canonical branch or published
+  release tag). `validate-matrix.py` enforces the rule and the declared pair
   counts; `gen-ci-matrix.sh` feeds CI and marks each build `immutable: true|false`.
 - The CERALIVE sender pair is built **from source** at its `ref`. This repo consumes no
   sender release artifact and no `.deb`; if a sender ref resolution fails in CI the fix
   is the ref in `matrix.yaml`, never a skipped job.
+- The sender registry and Dockerfile default use `CERALIVE/srtla-send-rs` `main`;
+  the libsrt registry and build-helper default use `srt-v1.5.7+ceralive.2`.
+  Completed A/B scenario documents and evidence retain their original branch names,
+  SHAs and frozen rules as historical provenance, not current build defaults.
+  The hosted-jitter lane's exact legacy SHA pins are likewise unchanged.
 - Two **pre-registered A/B campaigns** live in `scenarios/ab-periodic-nak.yaml` (D10:
   `SRTO_PERIODICNAKGATE=1` filter vs `=2` suppress on the receiver-side libsrt) and
   `scenarios/ab-keepalive-cadence.yaml` (D21: upstream recovery-keepalive cadence vs the

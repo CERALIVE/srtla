@@ -284,8 +284,11 @@ compat instruments (`srt-sink`, `ext-ka-probe`) under `tests/compat/`.
 ecosystem's senders (BELABOX, irlserver's Rust sender, CERALIVE's Rust sender, a Moblin
 conformance mock) and the CERALIVE sender against the ecosystem's receivers (BELABOX,
 OpenIRL, go-srtla, go-irl). `tests/compat/matrix.yaml` is the single registry of pins and
-pairs; every third-party implementation is addressed by an immutable `pin:`, every
-CERALIVE branch by a moving `ref:`.
+pairs; every third-party implementation is addressed by an immutable `pin:`.
+The CERALIVE sender uses `ref: main`; the libsrt registry and build-helper default
+use the published `srt-v1.5.7+ceralive.2` tag. Completed A/B documents and evidence
+retain their original branch names and resolved SHAs as historical provenance;
+the hosted-jitter lane also keeps its exact legacy SHA pins.
 
 ```bash
 bash tests/compat/run-matrix.sh --validate-only      # schema + invariants, no Docker
@@ -302,11 +305,14 @@ a quiesced bench host. The privileged netem scenarios self-skip (exit 77) withou
 
 ### CI
 
+`main` is the canonical and default branch; `legacy` preserves the former canonical
+history. The build gate is named **Build Check** (`build-check.yml`), not `ci.yml`.
+
 | Workflow | Trigger | What it proves |
 |---|---|---|
-| `build-check.yml` | push / PR | AMD64 + ARM64 build, `ctest`, receiver-only install |
-| `static-analysis.yml` | push / PR | `clang-tidy`, the workflow-contract scripts, a test lane |
-| `compat-matrix.yml` | push / PR / weekly | harness self-test, blocking + informational pairs, pcap replay, upstream drift |
+| `build-check.yml` | push / PR to `main` | AMD64 + ARM64 build, `ctest`, receiver-only install |
+| `static-analysis.yml` | push / PR to `main` | `clang-tidy`, the workflow-contract scripts, a test lane |
+| `compat-matrix.yml` | push / PR to `main` / weekly | harness self-test, blocking + informational pairs, pcap replay, upstream drift |
 | `build-and-push.yml` | push to `main` | upstream's GHCR image |
 
 `tests/workflow-contracts.sh` pins the shape of the workflows (ccache bounds, permission
