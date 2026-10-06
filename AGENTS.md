@@ -1,6 +1,18 @@
 # srtla (C receiver)
 
-Parent: [`../AGENTS.md`](../AGENTS.md)
+Parent: https://github.com/CERALIVE/ceralive/blob/master/AGENTS.md
+
+<!-- workspace-hard-rules:begin -->
+## Workspace hard rules (identical in every CeraLive AGENTS.md)
+- Commits and PRs carry the human author only: no Co-authored-by, no AI attribution.
+- Start from the updated canonical branch; rebase to update; never `reset --hard` or discard others' work.
+- One focused PR per repo, opened against CERALIVE/<repo>; the root policy PR merges first.
+- A repo is self-contained: no path above its root; consume @ceralive packages from the registry, never link:/file:.
+- Never delete, skip or weaken a test; every behavior change ships with a test.
+- A user-visible change updates docs.ceralive.tv in English and Spanish (es-419), and any ceralive.tv claim it touches, in the same release.
+- AGENTS.md holds rules and routing only, within budget; contracts and history live in docs/agents/.
+- Full canon: https://github.com/CERALIVE/ceralive/blob/master/AGENTS.md
+<!-- workspace-hard-rules:end -->
 
 ## ROLE IN THE GROUP
 
