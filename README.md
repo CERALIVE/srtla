@@ -289,6 +289,9 @@ The CERALIVE sender uses `ref: main`; the libsrt registry and build-helper defau
 use the published `srt-v1.5.7+ceralive.2` tag. Completed A/B documents and evidence
 retain their original branch names and resolved SHAs as historical provenance;
 the hosted-jitter lane also keeps its exact legacy SHA pins.
+[PARTIAL] H1 capacity and G5 DNS fixtures check cross-sender steady-state answers.
+Live/provider modes exit 77 and fixtures qualify nothing; commands and inputs
+are in [`docs/BENCHMARK-HARNESSES.md`](docs/BENCHMARK-HARNESSES.md).
 
 ```bash
 bash tests/compat/run-matrix.sh --validate-only      # schema + invariants, no Docker
