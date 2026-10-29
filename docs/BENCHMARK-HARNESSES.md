@@ -1,9 +1,9 @@
 # H1 relay capacity and G5 sender DNS
 
-[PARTIAL] The deterministic evaluators and fixture tests exist. Live capacity,
-provider, packet capture and per-uplink namespace execution remain owner-gated.
-No sender binary or receiver source changes are needed. These commands do not
-create listeners, namespaces, provider resources or DNS records.
+[EXISTS] Deterministic fixtures, H1 process/NIC capture and G5 isolated wire
+capture. No sender or receiver source is changed. Real modes create local
+processes/listeners and G5 creates disposable namespaces; neither creates
+provider resources or publishes DNS. The Miami campaign remains owner-gated.
 
 ```bash
 bash tests/compat/scenarios/capacity-probe.sh --selftest
@@ -16,12 +16,15 @@ Choose a new repo-local results directory for each run. Output files must not
 already exist. Exit 0 means the fixture evidence is sufficient to evaluate, not
 that live qualification passed; exit 1 means insufficient evidence or no safe
 capacity; exit 2 means invalid input or an output error. Without `--fixture` or
-`--selftest`, both scripts emit a JSON SKIP reason and exit **77**, including
-H1 `--real-host` and G5 `--live`. No environment flag bypasses this gate.
+`--selftest`, both scripts emit a JSON SKIP reason and exit **77** unless an
+explicit real mode and configuration are selected. Real modes use the same
+exclusive-output rule, retain raw capture in a sibling `*-artifacts` directory,
+and distinguish unavailable prerequisites (77, named reason), a failed or
+insufficient experiment (1), and invalid input/runtime failure (2).
 
-Every verdict includes `source: fixture`, `qualified: false`, the raw observations,
+Every fixture verdict includes `source: fixture`, `qualified: false`, the raw observations,
 `input_sha256` over input bytes and `rule_sha256` over the evaluator's versioned
-rule. Never copy fixture capacity into production configuration. G5 always emits
+rule. Never copy fixture capacity into production configuration. Fixture G5 always emits
 `dual_stack_safe: false`: even a synthetically safe result is only
 `fixture_dual_stack_safe: true`. Publishing AAAA requires the owner's real campaign,
 not these selftests. Real phone apps remain `UNVERIFIED` with a reason.
@@ -118,3 +121,219 @@ addresses, multiple CNAME hops and duplicate observations are invalid, not passe
 
 IRL Pro, Larix, OBS SRTLA forks and real BELABOX devices require separate
 owner-operated evidence. H3/H4/H5/H7 and relay-to-OBS RTT are outside this harness.
+
+## H1 real-host capture
+
+```bash
+bash tests/compat/scenarios/capacity-probe.sh --real-host \
+  --config tests/compat/results/h1-config.json \
+  --output tests/compat/results/h1-verdict.json
+```
+
+The runner measures the configured interface's Linux byte/packet counters.
+It runs a UDP iperf3 offered-load sweep with 1316-byte datagrams, in each direction, against an **already
+authorized** peer (`iperf3 -s -p 43000`). Only loss-bounded delivered Mbps and
+pps, capped by the observed NIC counters, enter the formula. These are
+conservative measured lower bounds, not advertised line rate. Choose enough
+offered rates to find the sustainable limit; record an unsaturated sweep as a
+lower bound. Isolate unrelated traffic and retain the peer's provenance.
+
+For each requested bond count (1..200), the runner executes the entire
+6/10/20 Mbps by 1/4/16 link matrix. Each cell first runs a separate stock
+baseline with the same load and window, then captures the measured run. It
+launches one unchanged sender and media caller per bond, one stock receiver,
+the real SLS command, and one output reader per bond. The reader writes
+delivered transport-stream bytes to `{media_file}`. No forwarding counter is
+substituted for delivered application goodput.
+
+Capture includes sampled `/proc/stat` per-core CPU, `/proc/net/dev` NIC bytes/packets,
+`/proc/net/snmp` UDP errors, receiver RSS/fds, SLS process CPU, and the stock
+receiver's Prometheus counters. Receiver affinity is fixed to `receiver_core`.
+`/proc/net/dev` observes the collector's current network namespace, unlike a
+sysfs mount inherited from the host. SLS CPU is conservatively its whole process load, capped at 100%; it is not an
+inferred GPU or per-worker measurement. Peak sampled loads and all raw snapshots
+are retained. Real `cpu_bound` also requires measured receiver-process CPU
+at least 85%, so an unrelated busy process on its pinned core cannot supply
+the scaling signal. Preview commands must emit ffmpeg `-progress pipe:1` frame
+counters; the cap uses the busiest sampled CPU interval and slowest actual
+frame-rate interval of every preview, not the requested output frame rate.
+Media callers must also emit `total_size` progress counters. Real cells check
+measured offered media against `bonds * bitrate_mbps` within 5%, so a nominal
+20-Mbps command that actually sends 2 Mbps cannot establish a 20-Mbps capacity.
+
+Required configuration is schema version 1:
+
+```json
+{
+  "schema_version": 1,
+  "provider_class": "local:loopback-smoke",
+  "interface": "lo",
+  "sender_ref": "main",
+  "sender_sha": "<actual 40-character main source SHA>",
+  "receiver": "build/srtla_rec",
+  "receiver_core": 0,
+  "port_base": 43100,
+  "duration_s": 1800,
+  "samples": 31,
+  "bonds": [1, 25, 50, 100, 150, 200],
+  "link_addresses": ["<16 configured source addresses>"],
+  "calibration": {
+    "host": "<authorized peer IP>", "port": 43000, "duration_s": 30,
+    "offered_mbps": [100, 300, 500, 1000], "maximum_loss_pct": 0.1
+  },
+  "sender": {"argv": ["srtla_send",
+    "{local_port}", "127.0.0.1", "{receiver_port}", "{ips_file}"]},
+  "sls": {"argv": ["<SLS executable>", "<its existing arguments>"],
+    "ready": "<its actual ready log marker>"},
+  "sink": {"argv": ["<output reader>", "<stream {bond}>", "{media_file}"]},
+  "load": {"argv": ["<media caller>", "<stream {bond} at {bitrate_mbps} Mbps>",
+    "<local SRT port {local_port}>"], "ready": "<actual first-media marker>"},
+  "preview": {"counts": [1, 2, 4],
+    "argv": ["<preview executable>", "<input>", "-progress", "pipe:1",
+      "<output for {index}>"]}
+}
+```
+
+Command arrays are executable boundaries, not shell snippets or metric
+providers. Replace the angle-bracket fields with the deployed applications'
+real argv; the input hash binds those templates to the run. Additional substitutions are `{sls_port}`,
+`{metrics_port}`, `{directory}` and `{duration_s}`. All service ports must be
+43000..43999. `ready` is optional for SLS; load readiness must represent actual
+media, not a sleep. Provide 16 real configured source addresses. The current
+main Rust sender is built from source, unmodified; `sender_sha` records that
+build provenance, and the receiver binary hash is recorded independently.
+Commands must keep the measured programs in the foreground. SLS CPU is the
+launched process's CPU, not a Docker CLI, a detached daemon or a remote host;
+those wrappers are not supported measurement boundaries.
+
+`measurements.json` and the verdict retain the fixture metric field names, but
+use `source: real-host`; fixture input still rejects that source. Short local
+windows produce measured observations with zero qualified capacity, not a
+30-minute pass. Local results always carry `qualified: false`; no command
+changes production caps, authorizes a host, or replaces the Miami campaign.
+
+## G5 isolation decision and live capture
+
+```bash
+bash tests/compat/scenarios/sender-dns.sh --live \
+  --config tests/compat/results/g5-config.json \
+  --output tests/compat/results/g5-verdict.json
+```
+
+The process tree runs inside an unprivileged user + mount + PID + network
+namespace. There is **one sender/application launch per case, not one per
+uplink**. Its two veth interfaces lead to two independently caching resolver
+namespaces. Both resolvers have the same DNS service address. Source-policy
+routes send interface-bound queries through that interface's resolver;
+unbound process-wide lookups follow the default uplink. Resolver configuration
+and NSS are bind-mounted only in the private mount namespace, so neither host
+DNS nor the host resolver daemon is used or changed.
+
+The lab opens its DNS and destination-capture sockets before launching the
+sender. A packet's resolver namespace, query bytes, answer bytes, source
+address and destination socket identify its path. Minimal registration
+responders echo the existing REG1/REG2/REG3 and keepalive wire messages so both
+uplinks can become observable. They share a group registry. This is a DNS
+destination experiment, **not media, reassembly or native receiver acceptance**.
+No device protocol or sender code is modified.
+Socket readiness and Linux pidfd exit readiness share one selector; no sender
+exit is inferred from a sleep or a periodic process poll.
+
+Source socket inodes from `/proc/net/udp{,6}` are joined to `/proc/<pid>/fd`.
+Only one actual sending PID across both paths can be classified, including
+when an application launcher has descendants. Unattributed/exited sockets or
+two sender children force `unknown`. Known one-process resolve-once and
+per-network socket controls calibrate the topology; they are reported
+separately as `isolation_controls`, never as product senders. Additional controls
+prove the stale-cache split and real DNS64/UDP translation round trip.
+
+CONTROL gives the two resolvers different node A answers. A single process
+with different captured destinations and queries at both resolvers is
+`per_network`. One target query and the same captured destination on both
+uplinks is `resolve_once`. Missing packets, multiple sender instances, repeated
+queries without a proven single lookup, or ambiguous evidence remain `unknown`.
+In particular, two separately launched resolve-once senders can never prove
+per-network behavior.
+
+The per-relay case returns one CNAME to one node A. Stale-cache priming sends
+real DNS requests through both paths, changes the authority, and invalidates
+only the second cache. Old and new destinations remain in `split_during_change`.
+Priming queries are excluded from sender classification and retained in the
+raw capture. A/AAAA-only and divergent dual-stack cases retain unsuccessful
+resolution/connection attempts, including early sender exit; they are never
+converted to selected literal addresses.
+
+The NAT64 arm gives the second path a DNS64 synthesized address and translates
+UDP payload/reply traffic through an actual per-client IPv6/IPv4 socket mapping.
+This covers this UDP destination decision, not carrier NAT64 ICMP,
+fragmentation, MTU or arbitrary transport behavior. `dual_stack_safe` requires
+all four real senders, two observed paths and one node in every family case,
+both families in the divergent dual-stack case, and a synthesized destination
+plus translated IPv4 traffic in NAT64. Missing/failed cases keep it false.
+Review this bounded UDP evidence before any separate publication decision.
+
+### Sender execution boundaries
+
+The config's `senders` map has these names and boundaries:
+
+| Name | `boundary` | Actual command |
+|---|---|---|
+| `c-srtla-send` | `bonded-process` | `build/srtla_send {local_port} {hostname} {receiver_port} {ips_file}` |
+| `srtla-send-rs` | `bonded-process` | unchanged main binary, same positional CLI |
+| `moblin-mock` | `sequential-rebind` | existing pinned Python mock, `--bind-ip {ip0} --ip-change-to {ip1} --ip-change-at-sec 0`, plus receiver/local-port arguments |
+| `ceraui-resolveSrtla` | `application-cache` | built-in Bun probe imports the actual helper/cache, then starts ONE unchanged bonded sender |
+
+The Moblin mock takes only one active interface, then rebinds within the same
+process after registration. The capture reports that boundary, not simultaneous
+native Moblin paths. It does not justify translating mock system-resolver
+behavior into Apple's network-scoped resolver behavior.
+
+CeraUI is not a standalone libc resolver. Its actual `resolveSrtla` calls
+`dnsCacheResolve`, validates answers asynchronously, queues gateway updates,
+and may return a hostname on a fresh answer but a literal from its persistent
+cache. The built-in `ceraui-resolver-probe.mjs` imports the configured real
+module with its actual cache in a private per-case working directory, calls the
+helper twice in that same application process, records both returned choices,
+and passes the cold return unchanged to one bonded sender. It does not assert
+that a warm call must hit the cache: the application's validation/cache policy
+decides that. The lab also answers CeraUI's real well-known DNS validation
+request. Do not replace the helper with `getaddrinfo`, an extracted function,
+or a mock cache. Record the application source SHA.
+The CeraUI entry uses `helper_module`, `setup_file`, `sender_binary` and optional `bun`
+instead of `argv`; missing files/dependencies are named prerequisites. The
+module and installed application dependencies must be available as repo-local
+source/build inputs. An absent application entry is explicitly `UNVERIFIED` with
+`missing_sender_command:ceraui-resolveSrtla`; it is not a synthetic pass.
+The supplied unchanged boot setup is copied into the private working directory.
+Production DNS code runs with mocks disabled. `CERALIVE_DEVICE_TYPE=emulated`
+prevents gateway/device-control side effects; it does not replace the helper,
+its DNS resolver or cache. This measures the actual helper/cache on a host,
+not full CeraUI device startup.
+
+Example configuration for a real, deliberately partial C-sender campaign:
+
+```json
+{
+  "schema_version": 1,
+  "requested": ["c-srtla-send"],
+  "timeout_s": 8,
+  "receiver_port": 43060,
+  "senders": {
+    "c-srtla-send": {
+      "boundary": "bonded-process",
+      "argv": ["build/srtla_send", "{local_port}", "{hostname}",
+        "{receiver_port}", "{ips_file}"]
+    }
+  }
+}
+```
+
+Omit `requested` for all four senders. Missing commands produce an aggregate
+77 with explicit names **after** retaining available real observations.
+Selecting a subset completes those observations only; `complete` remains false
+and unrequested senders stay UNVERIFIED. An observed unsafe family is a result,
+not a missing prerequisite or a SKIP. Every case retains its process identity,
+argv, source SHA, resolver queries, captured packets, per-path selected address
+or absence, and exit/deadline evidence. Real verdicts have `source: live`.
+All processes are reaped and namespace descriptors closed before return;
+kernel namespace lifetime removes their interfaces and private mounts.

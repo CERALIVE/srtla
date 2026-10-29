@@ -1,4 +1,4 @@
-"""Shared, dependency-free boundary for fixture-only benchmark commands."""
+"""Shared, dependency-free boundary for benchmark commands."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def run(
     rule: str,
     test_class: str,
 ) -> int:
-    parser = argparse.ArgumentParser(description=f"{name}: fixture evaluation; live runs are owner-gated")
+    parser = argparse.ArgumentParser(description=f"{name}: fixtures or explicit real-run configuration")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--selftest", action="store_true")
     mode.add_argument("--fixture", type=Path)
@@ -79,18 +79,27 @@ def run(
     if name == "relay-capacity-probe":
         mode.add_argument("--real-host", action="store_true")
     parser.add_argument("--output", type=Path, help="new verdict.json; existing files are never replaced")
+    parser.add_argument("--config", type=Path, help="real-run configuration; see docs/BENCHMARK-HARNESSES.md")
     args = parser.parse_args()
-    if args.output is not None and args.fixture is None:
-        parser.error("--output requires --fixture")
+    live = args.live or getattr(args, "real_host", False)
+    if args.output is not None and args.fixture is None and not live:
+        parser.error("--output requires --fixture, --live or --real-host")
+    if args.config is not None and not live:
+        parser.error("--config requires --live or --real-host")
     if args.selftest:
         return subprocess.run(
-            [sys.executable, str(Path(__file__).with_name("test_benchmark_harnesses.py")), test_class, "CliTests"],
+            [sys.executable, str(Path(__file__).with_name("test_benchmark_harnesses.py")),
+             test_class, "CliTests", "LiveTests"],
             check=False, timeout=60,
         ).returncode
+    if live:
+        from benchmark_live import run_live
+
+        return run_live(name, args.config, args.output, rule)
     if args.fixture is None:
         print(json.dumps({
             "scenario": name, "status": "SKIP", "qualified": False,
-            "reason": "live capacity/provider/netns legs require owner-gated todo 43; no live run performed",
+            "reason": "missing_mode: select --fixture, --selftest, --real-host or --live",
         }))
         return 77
     if args.output is None:
