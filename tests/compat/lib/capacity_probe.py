@@ -38,8 +38,10 @@ def capacity(bonds: int, nic_mbps: float, pps: float, per_bond_pps: float) -> tu
     return cap, 2 * cap
 
 
-def evaluate(value: Json) -> JsonMap:
-    document = fixture_document(value)
+def evaluate(value: Json, *, captured: bool = False) -> JsonMap:
+    document = mapping(value) if captured else fixture_document(value)
+    if captured and (document.get("schema_version") != 1 or document.get("source") != "real-host"):
+        raise ValueError("captured metrics require schema_version 1, source real-host")
     if document.get("sender_ref") != "main" or document.get("receiver") != "stock":
         raise ValueError("H1 requires unchanged main sender and stock receiver")
     provider_class = text(document["provider_class"])
@@ -87,6 +89,11 @@ def evaluate(value: Json) -> JsonMap:
             raise ValueError("recvmmsg batches must contain packets")
         climbing = all(b > a for a, b in zip(fill, fill[1:]))
         bound = duration >= 1800 and cores[receiver_core] >= 85 and climbing and nic_load <= 0.6 and sls_cpu < 70
+        if captured:
+            receiver_cpu = number(cell["receiver_cpu_pct"])
+            if receiver_cpu > 100:
+                raise ValueError("receiver CPU must be a percentage")
+            bound = bound and receiver_cpu >= 85
         cpu_bound = cpu_bound or bound
         monotonic_growth = rss[-1] > rss[0] and all(b >= a for a, b in zip(rss, rss[1:]))
         rss_ok = not monotonic_growth or rss[-1] - rss[0] <= stock_rss[-1] - stock_rss[0]
@@ -104,6 +111,10 @@ def evaluate(value: Json) -> JsonMap:
             "evictions": integer(cell["evictions"]) == 0,
             "disconnects": integer(cell["disconnects"]) == 0,
         }
+        if captured:
+            offered = number(cell["offered_goodput_mbps"])
+            target = bonds * bitrate
+            checks["offered_load"] = abs(offered - target) <= target * 0.05
         ok = all(checks.values())
         if ok:
             passed.setdefault(bonds, set()).add((bitrate, links))
@@ -132,7 +143,7 @@ def evaluate(value: Json) -> JsonMap:
         if number(trial["duration_s"]) >= 1800 and cpu < 70 and number(trial["minimum_fps"]) >= 9.5:
             preview_cap = max(preview_cap, count)
     return {
-        "scenario": "H1", "source": "fixture", "qualified": False,
+        "scenario": "H1", "source": "real-host" if captured else "fixture", "qualified": False,
         "winner": "fixture_capacity" if soft_cap else "insufficient",
         "provider_class": provider_class, "bond_count_result": bond_count,
         "softCapBonds": soft_cap, "maxAssignedRelays": max_assigned,
