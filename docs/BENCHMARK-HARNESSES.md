@@ -137,6 +137,7 @@ pps, capped by the observed NIC counters, enter the formula. These are
 conservative measured lower bounds, not advertised line rate. Choose enough
 offered rates to find the sustainable limit; record an unsaturated sweep as a
 lower bound. Isolate unrelated traffic and retain the peer's provenance.
+Calibration passes `-w 104857600` to request the same 100 MiB socket buffer as `srtla_rec` (`RECV_BUF_SIZE` in `src/common.h:58`, applied by `src/receiver_main.cpp:34-35`) on both iperf3 endpoints; both calibration endpoints must have `net.core.rmem_max` and `net.core.wmem_max` at or above 104857600 (production relay nodes use 134217728) to avoid iperf3 aborting with "socket buffer size not set correctly".
 
 For each requested bond count (1..200), the runner executes the entire
 6/10/20 Mbps by 1/4/16 link matrix. Each cell first runs a separate stock

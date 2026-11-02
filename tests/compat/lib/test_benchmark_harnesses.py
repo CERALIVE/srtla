@@ -746,28 +746,49 @@ class LiveTests(unittest.TestCase):
         result = {"end": {"sum": {
             "seconds": 1, "packets": 1900, "lost_packets": 0, "bits_per_second": 20e6,
         }}}
-        with tempfile.TemporaryDirectory() as directory, \
+        offered_mbps = [20, 100, 300, 500, 1000]
+        for duration in (None, 1):
+            with self.subTest(duration=duration), tempfile.TemporaryDirectory() as directory, \
                 patch("capacity_live.require_tool", return_value="/fixture/iperf3"), \
                 patch("capacity_live.nic_counters", side_effect=[
                     [0, 0, 0, 0], [2500000, 2500000, 2000, 2000],
                     [0, 0, 0, 0], [2500000, 2500000, 2000, 2000],
-                ]), \
-                patch("capacity_live.time.monotonic", side_effect=[0, 1, 2, 3]), \
+                ] * len(offered_mbps)), \
+                patch("capacity_live.time.monotonic", side_effect=range(4 * len(offered_mbps))), \
+                patch("capacity_live.iperf_result", wraps=capacity_live.iperf_result) as parsed, \
                 patch("capacity_live.subprocess.run", return_value=subprocess.CompletedProcess(
                     [], 0, json.dumps(result), "",
                 )) as invoked:
-            nic, pps, _ = capacity_live.calibrate({
-                "interface": "fixture", "calibration": {
-                    "host": "127.0.0.1", "port": 43000, "duration_s": 1, "offered_mbps": [20],
-                },
-            }, Path(directory))
-            self.assertEqual(nic, {"in": 20, "out": 20})
-            self.assertEqual(pps, {"in": 1900, "out": 1900})
-            commands = [call.args[0] for call in invoked.call_args_list]
-            for command in commands:
-                self.assertEqual(command[command.index("-l") + 1], "1316")
-            self.assertIn("-R", commands[0])
-            self.assertNotIn("-R", commands[1])
+                calibration = {
+                    "host": "127.0.0.1", "port": 43000, "offered_mbps": offered_mbps,
+                }
+                if duration is not None:
+                    calibration["duration_s"] = duration
+                nic, pps, evidence = capacity_live.calibrate({
+                    "interface": "fixture", "calibration": calibration,
+                }, Path(directory))
+                self.assertEqual(nic, {"in": 20, "out": 20})
+                self.assertEqual(pps, {"in": 1900, "out": 1900})
+                self.assertEqual([record["offered_mbps"] for record in evidence], offered_mbps * 2)
+                self.assertEqual(invoked.call_count, len(offered_mbps) * 2)
+                for index, invocation in enumerate(invoked.call_args_list):
+                    expected = [
+                        "/fixture/iperf3", "-c", "127.0.0.1", "-p", "43000", "-u",
+                        "-b", f"{offered_mbps[index % len(offered_mbps)]}.0M",
+                        "-l", "1316", "-t", str(30 if duration is None else duration),
+                        "-J", "--get-server-output", "-w", "104857600",
+                    ]
+                    if index < len(offered_mbps):
+                        expected.append("-R")
+                    self.assertEqual(invocation.args, (expected,))
+                    self.assertEqual(invocation.kwargs, {
+                        "capture_output": True, "text": True, "check": True,
+                        "timeout": (30 if duration is None else duration) + 30,
+                    })
+                self.assertEqual(
+                    [invocation.args for invocation in parsed.call_args_list],
+                    [(result, 0.1)] * (len(offered_mbps) * 2),
+                )
 
     def test_nic_capture_uses_current_network_namespace_counter_layout(self) -> None:
         counters = (
