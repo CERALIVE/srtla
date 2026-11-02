@@ -117,6 +117,7 @@ def calibrate(config: dict, directory: Path) -> tuple[dict, dict, list[dict]]:
             command = [
                 tool, "-c", host, "-p", str(service_port), "-u", "-b", f"{bitrate}M",
                 "-l", "1316", "-t", str(duration), "-J", "--get-server-output",
+                "-w", "104857600",
             ]
             if direction == "in":
                 command.append("-R")

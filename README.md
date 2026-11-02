@@ -312,6 +312,7 @@ positive `total_size` progress. A publisher without progress fails within the
 
 `main` is the canonical and default branch; `legacy` preserves the former canonical
 history. The build gate is named **Build Check** (`build-check.yml`), not `ci.yml`.
+H1 calibration requests the production receiver's 104857600-byte socket buffer in both directions.
 
 | Workflow | Trigger | What it proves |
 |---|---|---|
