@@ -146,6 +146,13 @@ the real SLS command, and one output reader per bond. The reader writes
 delivered transport-stream bytes to `{media_file}`. No forwarding counter is
 substituted for delivered application goodput.
 
+For each bond, the sender and publishing load start before the playback reader.
+The load's existing FFmpeg `total_size` counter must become strictly positive
+within the 15-second readiness wait before that bond's reader can start.
+`out_time_us=N/A`, `total_size=N/A` and `total_size=0` do not qualify.
+Expiry raises `publisher_progress_not_ready` and tears down the owned processes;
+measurement duration, sample count and calibration limits are unchanged.
+
 Capture includes sampled `/proc/stat` per-core CPU, `/proc/net/dev` NIC bytes/packets,
 `/proc/net/snmp` UDP errors, receiver RSS/fds, SLS process CPU, and the stock
 receiver's Prometheus counters. Receiver affinity is fixed to `receiver_core`.
