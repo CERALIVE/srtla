@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -25,7 +26,7 @@ import sender_dns_live
 from benchmark_live import Processes, PrerequisiteError, port
 from unittest.mock import patch
 from types import SimpleNamespace
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from benchmark_live import run_live
 
@@ -683,10 +684,31 @@ class LiveTests(unittest.TestCase):
                 "preview": {}, "calibration": {}, "link_addresses": ["127.0.0.1"], "bonds": [25],
             }
             fixture = capacity_fixture()
+            payload = b"\x47" + bytes(187)
+            original_unlink = Path.unlink
+
+            def unlink_media(path: Path, *args, **kwargs):
+                if path.name.startswith("delivered-"):
+                    verdict = json.loads((path.parent / "verdict.json").read_text())
+                    self.assertTrue(verdict["delivered_stock_media"])
+                    self.assertEqual(verdict["metrics"]["delivered_goodput_mbps"], 100)
+                    manifest = json.loads((path.parent / "media-manifest.json").read_text())
+                    self.assertEqual(len(manifest), 25)
+                    self.assertIn({
+                        "path": str(path), "size_bytes": len(payload),
+                        "sha256": hashlib.sha256(payload).hexdigest(), "ffprobe": None,
+                    }, manifest)
+                    self.assertEqual(path.read_bytes(), payload)
+                return original_unlink(path, *args, **kwargs)
 
             def collect(actual_config, output, bonds, bitrate, links):
                 self.assertEqual(actual_config["interface"], "lo")
                 self.assertEqual(bonds, 25)
+                if output.parent.name == "verdict-artifacts":
+                    self.assertEqual(len(list(output.parent.rglob("delivered-*.ts"))), 0)
+                output.mkdir()
+                for bond in range(bonds):
+                    (output / f"delivered-{bond}.ts").write_bytes(payload)
                 cell = copy.deepcopy(next(
                     cell for cell in fixture["cells"]
                     if cell["bitrate_mbps"] == bitrate and cell["links"] == links
@@ -700,12 +722,24 @@ class LiveTests(unittest.TestCase):
                 fixture["sustainable_nic_mbps"], fixture["sustainable_pps"], [],
             )) as calibrated, patch("capacity_live.measure", side_effect=collect) as measured, \
                     patch("capacity_live.preview_trials", return_value=fixture["preview_trials"]), \
+                    patch.object(Path, "unlink", unlink_media), \
                     redirect_stdout(StringIO()):
                 code = run_live("relay-capacity-probe", source, output, capacity_probe.RULE)
+                self.assertEqual(measured.call_count, 18)
+                self.assertFalse(list((root / "verdict-artifacts").rglob("delivered-*.ts")))
+                self.assertEqual(len(list((root / "verdict-artifacts").rglob("media-manifest.json"))), 18)
+                retained_output = root / "retained.json"
+                with patch("capacity_live.retire_media", return_value=None, create=True):
+                    retained_code = run_live("relay-capacity-probe", source, retained_output, capacity_probe.RULE)
             self.assertEqual(code, 0)
-            calibrated.assert_called_once()
-            self.assertEqual(measured.call_count, 18)
+            self.assertEqual(retained_code, 0)
+            self.assertEqual(calibrated.call_count, 2)
             result = json.loads(output.read_text())
+            retained_result = json.loads(retained_output.read_text())
+            result_without_path = {key: value for key, value in result.items() if key != "artifacts"}
+            retained_without_path = {key: value for key, value in retained_result.items() if key != "artifacts"}
+            self.assertEqual(result_without_path, retained_without_path)
+            self.assertEqual(len(list((root / "retained-artifacts").rglob("delivered-*.ts"))), 450)
             self.assertEqual(result["status"], "MEASURED")
             self.assertEqual(result["source"], "real-host")
             self.assertEqual(result["winner"], "measured_capacity")
@@ -718,6 +752,58 @@ class LiveTests(unittest.TestCase):
             retained = json.loads((root / "verdict-artifacts/measurements.json").read_text())
             self.assertEqual(retained["source"], "real-host")
             self.assertEqual(len(retained["cells"]), 9)
+
+    def test_h1_low_disk_is_a_named_environment_precondition_before_launch(self) -> None:
+        # Five six-Mbps bonds at +5%: 1800s + 75s readiness + 85s teardown, plus 1 GiB.
+        peak_bytes = 8791241824
+        for free_bytes, expected_code in ((0, 77), (peak_bytes - 1, 77), (peak_bytes, 2)):
+            with self.subTest(free_bytes=free_bytes), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = {
+                    "schema_version": 1, "interface": "lo", "provider_class": "test:measured",
+                    "sender_ref": "main", "sender_sha": "1" * 40, "receiver": sys.executable,
+                    "sender": {}, "sls": {}, "sink": {}, "load": {}, "preview": {}, "calibration": {},
+                    "link_addresses": ["127.0.0.1"], "bonds": [5],
+                }
+                source, output = root / "config.json", root / "verdict.json"
+                source.write_text(json.dumps(config))
+                with patch("capacity_live.calibrate", return_value=({}, {}, [])), \
+                        patch("shutil.disk_usage", return_value=SimpleNamespace(free=free_bytes)), \
+                        patch("capacity_live.Processes", side_effect=RuntimeError("capture_started")) as launched, \
+                        redirect_stdout(StringIO()), redirect_stderr(StringIO()) as errors:
+                    code = run_live("relay-capacity-probe", source, output, capacity_probe.RULE)
+                self.assertEqual(code, expected_code)
+                if free_bytes < peak_bytes:
+                    launched.assert_not_called()
+                    result = json.loads(output.read_text())
+                    self.assertEqual(result["status"], "SKIP")
+                    self.assertEqual(
+                        result["reason"],
+                        f"insufficient_h1_disk:free_bytes={free_bytes}:required_bytes={peak_bytes}",
+                    )
+                    self.assertFalse(list((root / "verdict-artifacts").iterdir()))
+                else:
+                    launched.assert_called_once()
+                    self.assertIn("capture_started", errors.getvalue())
+
+    def test_h1_keeps_media_when_verdict_or_manifest_cannot_be_written(self) -> None:
+        for failed_artifact in ("verdict.json", "media-manifest.json"):
+            with self.subTest(artifact=failed_artifact), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                media = root / "delivered-0.ts"
+                payload = bytes(1024 * 1024 + 1)
+                media.write_bytes(payload)
+                original_write = Path.write_text
+
+                def write_artifact(path: Path, *args, **kwargs):
+                    if path.name == failed_artifact:
+                        raise OSError("artifact_write_failed")
+                    return original_write(path, *args, **kwargs)
+
+                with patch.object(Path, "write_text", write_artifact), \
+                        self.assertRaisesRegex(OSError, "^artifact_write_failed$"):
+                    capacity_live.retire_media(root, {"delivered_stock_media": True})
+                self.assertEqual(media.read_bytes(), payload)
 
     def test_other_workstation_port_allocations_do_not_extend_this_contract(self) -> None:
         for invalid in (47000, 47499):

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -148,8 +150,15 @@ def calibrate(config: dict, directory: Path) -> tuple[dict, dict, list[dict]]:
 def measure(
     config: dict, directory: Path, bonds: int, bitrate: int, links: int,
 ) -> dict:
-    directory.mkdir()
     duration = number(config.get("duration_s", 1800), positive=True)
+    # Budget the existing +5% load tolerance, publisher readiness and teardown.
+    peak_bytes = math.ceil(
+        bonds * bitrate * 1e6 / 8 * 1.05 * (duration + 15 * bonds + 5 * (3 * bonds + 2))
+    ) + 1024**3  # Reserve space for logs, samples and verdict artifacts.
+    free_bytes = shutil.disk_usage(directory.parent).free
+    if free_bytes < peak_bytes:
+        raise PrerequisiteError(f"insufficient_h1_disk:free_bytes={free_bytes}:required_bytes={peak_bytes}")
+    directory.mkdir()
     samples = integer(config.get("samples", 31), positive=True)
     if samples < 3:
         raise ValueError("capture requires at least three samples")
@@ -299,6 +308,26 @@ def preview_trials(config: dict, directory: Path) -> list[dict]:
     return results
 
 
+def retire_media(directory: Path, verdict: JsonMap) -> None:
+    """Persist completed media checks before replacing owned streams with evidence."""
+    (directory / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
+    media = sorted(directory.glob("delivered-*.ts"))
+    manifest = []
+    for path in media:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        manifest.append({
+            "path": str(path), "size_bytes": path.stat().st_size,
+            "sha256": digest.hexdigest(), "ffprobe": None,
+        })
+    # H1 has no ffprobe-based verdict checks; do not add a new media gate.
+    (directory / "media-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    for path in media:
+        path.unlink()
+
+
 def capture(config: JsonMap, directory: Path) -> JsonMap:
     for key in ("interface", "provider_class", "receiver", "sender", "sls", "sink", "load", "preview", "calibration", "link_addresses"):
         if key not in config:
@@ -316,9 +345,16 @@ def capture(config: JsonMap, directory: Path) -> JsonMap:
         for bitrate, links in product((6, 10, 20), (1, 4, 16)):
             label = f"{bonds}-{bitrate}-{links}"
             baseline = measure(config, directory / (label + "-stock"), bonds, bitrate, links)
+            stock_media = bool(baseline["delivered_goodput_mbps"])
+            retire_media(directory / (label + "-stock"), {
+                "metrics": baseline, "delivered_stock_media": stock_media,
+            })
             cell = measure(config, directory / label, bonds, bitrate, links)
             cell["stock_rss_bytes"] = baseline["rss_bytes"]
             cell["baseline_goodput_mbps"] = baseline["delivered_goodput_mbps"]
+            retire_media(directory / label, {
+                "metrics": cell, "delivered_stock_media": stock_media,
+            })
             if not cell["baseline_goodput_mbps"]:
                 raise RuntimeError(f"no_delivered_stock_media:{label}")
             cells.append(cell)

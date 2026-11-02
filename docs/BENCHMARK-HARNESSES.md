@@ -146,6 +146,7 @@ launches one unchanged sender and media caller per bond, one stock receiver,
 the real SLS command, and one output reader per bond. The reader writes
 delivered transport-stream bytes to `{media_file}`. No forwarding counter is
 substituted for delivered application goodput.
+After each stock or measured run, H1 writes its media-check verdict and a path/size/SHA-256 manifest (`ffprobe: null`, since H1 uses no ffprobe summary), then deletes delivered media before the next run; each run preflights space for its bond-count bitrate with the existing 5% load tolerance over the capture, publisher-readiness and teardown windows plus 1 GiB for artifacts, exiting 77 with `insufficient_h1_disk` if unavailable.
 
 For each bond, the sender and publishing load start before the playback reader.
 The load's existing FFmpeg `total_size` counter must become strictly positive
