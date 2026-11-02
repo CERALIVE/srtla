@@ -23,6 +23,7 @@ import capacity_probe
 import sender_dns
 import capacity_live
 import sender_dns_live
+from test_capacity_remote import RemoteGeneratorTests
 from benchmark_live import Processes, PrerequisiteError, port
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -406,7 +407,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(target.exists(), expected == 1)
 
 
-class LiveTests(unittest.TestCase):
+class LiveTests(RemoteGeneratorTests, unittest.TestCase):
     def test_live_observe_launches_one_bonded_sender_for_both_uplinks(self) -> None:
         # Loopback substitutes for link namespaces; launches, packets and PID
         # attribution remain real, with capture sockets opened before launch.
