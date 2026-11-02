@@ -125,6 +125,8 @@ Do not weaken a job to get green, and do not add a workflow that publishes anyth
   compat scenarios directory. Real modes require explicit config; missing
   prerequisites exit 77 with a named reason. Keep one sender across uplinks;
   observe CeraUI at its application/cache boundary. Miami remains owner-gated.
+  H1 sinks start only after their publisher emits positive `total_size` progress;
+  the existing 15-second readiness deadline fails as `publisher_progress_not_ready`.
 
 ## DOCS
 

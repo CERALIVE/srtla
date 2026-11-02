@@ -57,7 +57,7 @@ class Processes:
 
     def start(
         self, command: list[str], log: Path, marker: str | None = None,
-        *, cwd: Path | None = None, env: dict[str, str] | None = None,
+        *, cwd: Path | None = None, env: dict[str, str] | None = None, byte_progress: bool = False,
     ) -> subprocess.Popen:
         destination = self.stack.enter_context(log.open("xb"))
         ready = threading.Event()
@@ -77,14 +77,17 @@ class Processes:
                     match = re.fullmatch(rb"total_size=(\d+)\s*", line)
                     if match:
                         self.bytes[child.pid] = int(match[1])
-                    if marker is not None and marker.encode() in line:
+                        if byte_progress and self.bytes[child.pid] > 0:
+                            ready.set()
+                    if not byte_progress and marker is not None and marker.encode() in line:
                         ready.set()
 
         reader = threading.Thread(target=consume, args=(child.stdout,), daemon=True)
         reader.start()
         self.readers.append(reader)
-        if marker is not None and not ready.wait(15):
-            raise RuntimeError(f"readiness_timeout:{command[0]}: see {log}")
+        if (marker is not None or byte_progress) and not ready.wait(15):
+            reason = "publisher_progress_not_ready" if byte_progress else "readiness_timeout"
+            raise RuntimeError(f"{reason}:{command[0]}: see {log}")
         return child
 
     def alive(self) -> None:

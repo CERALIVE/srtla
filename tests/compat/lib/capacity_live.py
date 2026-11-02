@@ -184,14 +184,15 @@ def measure(
             media = directory / f"delivered-{bond}.ts"
             outputs.append(media)
             bond_variables = {**variables, "bond": bond, "local_port": base + 10 + bond, "media_file": str(media)}
-            sink_config = mapping(config["sink"])
-            processes.start(argv(sink_config, bond_variables), directory / f"sink-{bond}.log")
             sender_config = mapping(config["sender"])
             processes.start(argv(sender_config, bond_variables), directory / f"sender-{bond}.log")
             load_config = mapping(config["load"])
             loads.append(processes.start(
                 argv(load_config, bond_variables), directory / f"load-{bond}.log", text(load_config["ready"]),
+                byte_progress=True,
             ))
+            sink_config = mapping(config["sink"])
+            processes.start(argv(sink_config, bond_variables), directory / f"sink-{bond}.log")
         url = f"http://127.0.0.1:{base + 1}/metrics"
         counters: dict[str, list] = {
             key: [] for key in ("packets_received", "recv_batches", "udp_receive_errors", "rss_bytes", "fd_count")

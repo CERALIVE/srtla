@@ -305,6 +305,11 @@ a quiesced bench host. The privileged netem scenarios self-skip (exit 77) withou
 
 ### CI
 
+H1 capacity capture starts each playback sink only after its publisher reports
+positive `total_size` progress. A publisher without progress fails within the
+15-second readiness wait as `publisher_progress_not_ready`; see
+[`docs/BENCHMARK-HARNESSES.md`](docs/BENCHMARK-HARNESSES.md).
+
 `main` is the canonical and default branch; `legacy` preserves the former canonical
 history. The build gate is named **Build Check** (`build-check.yml`), not `ci.yml`.
 

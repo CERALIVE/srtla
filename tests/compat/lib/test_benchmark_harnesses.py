@@ -582,7 +582,8 @@ class LiveTests(unittest.TestCase):
             def launch(command: list[str], *args, **kwargs):
                 if "sink" in command:
                     media.write_bytes(b"")
-                return SimpleNamespace(pid=(101, 202, 303, 404, 505)[processes.start.call_count - 1])
+                role = Path(args[0]).stem.split("-")[0]
+                return SimpleNamespace(pid={"sls": 101, "receiver": 202, "sink": 303, "sender": 404, "load": 505}[role])
 
             def sample() -> None:
                 delivered = (0, 750000, 1500000)[processes.alive.call_count - 1]
@@ -596,6 +597,54 @@ class LiveTests(unittest.TestCase):
             self.assertEqual(processes.start.call_count, 5)
             self.assertEqual(processes.alive.call_count, 3)
         return cell, json.loads((directory / "samples.json").read_text())
+
+    def publisher_startup(self, root: Path, publishing: bool) -> None:
+        """Use real log readers and child groups; stop before OS sampling."""
+        idle = [sys.executable, "-c", "import signal; signal.pause()"]
+        publisher = (
+            "import signal; "
+            "print('out_time_us=N/A\\ntotal_size=N/A\\ntotal_size=0', flush=True); "
+            + ("print('total_size=1316', flush=True); " if publishing else "")
+            + "signal.pause()"
+        )
+        sink = (
+            "import pathlib,re,signal,sys; p=pathlib.Path(sys.argv[1]); "
+            "ready=p.exists() and bool(re.search(r'^total_size=[1-9][0-9]*$', p.read_text(), re.M)); "
+            "print('CHECKED', ready, flush=True); signal.pause()"
+        )
+        config = {
+            "duration_s": 1800, "samples": 31, "interface": "lo",
+            "link_addresses": ["127.0.0.1"], "receiver": sys.executable,
+            "sls": {"argv": idle}, "sender": {"argv": idle},
+            "load": {"argv": [sys.executable, "-c", publisher], "ready": "out_time_us="},
+            "sink": {"argv": [sys.executable, "-c", sink, "{directory}/load-{bond}.log"]},
+        }
+        original_start = Processes.start
+
+        def launch(owner, command, log, marker=None, **options):
+            if log.name == "receiver.log":
+                command = [sys.executable, "-c", "import signal; print('srtla_rec is now running', flush=True); signal.pause()"]
+            if log.name.startswith("sink-"):
+                marker = "CHECKED"
+            child = original_start(owner, command, log, marker, **options)
+            if log.name.startswith("sink-"):
+                self.assertEqual(log.read_text().strip(), "CHECKED True")
+            return child
+
+        with patch.object(Processes, "start", launch), \
+                patch("capacity_live.cpu_counters", side_effect=RuntimeError("sampling_reached")):
+            capacity_live.measure(config, root / "cell", 2, 6, 1)
+
+    def test_each_sink_starts_only_after_its_publisher_has_positive_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "^sampling_reached$"):
+                self.publisher_startup(Path(directory), True)
+
+    def test_publisher_without_positive_progress_has_named_bounded_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "^publisher_progress_not_ready:"):
+                self.publisher_startup(Path(directory), False)
+            self.assertFalse(list(Path(directory).rglob("sink-*.log")))
 
     def test_measure_emits_exact_peak_nic_mbps_from_sampled_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
