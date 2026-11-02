@@ -13,6 +13,7 @@ import threading
 import time
 import urllib.request
 from itertools import product
+from functools import partial
 from pathlib import Path
 
 from benchmark_fixture_io import JsonMap, integer, mapping, number, rows, text
@@ -147,17 +148,25 @@ def calibrate(config: dict, directory: Path) -> tuple[dict, dict, list[dict]]:
     return ceilings, packets, evidence
 
 
-def measure(
-    config: dict, directory: Path, bonds: int, bitrate: int, links: int,
-) -> dict:
-    duration = number(config.get("duration_s", 1800), positive=True)
+def media_space(directory: Path, bonds: int, bitrate: int, duration: float) -> None:
     # Budget the existing +5% load tolerance, publisher readiness and teardown.
     peak_bytes = math.ceil(
         bonds * bitrate * 1e6 / 8 * 1.05 * (duration + 15 * bonds + 5 * (3 * bonds + 2))
     ) + 1024**3  # Reserve space for logs, samples and verdict artifacts.
-    free_bytes = shutil.disk_usage(directory.parent).free
+    free_bytes = shutil.disk_usage(directory).free
     if free_bytes < peak_bytes:
         raise PrerequisiteError(f"insufficient_h1_disk:free_bytes={free_bytes}:required_bytes={peak_bytes}")
+
+
+def measure(
+    config: dict, directory: Path, bonds: int, bitrate: int, links: int,
+    *, generator=None,
+) -> dict:
+    duration = number(config.get("duration_s", 1800), positive=True)
+    if generator is None:
+        media_space(directory.parent, bonds, bitrate, duration)
+    elif shutil.disk_usage(directory.parent).free < 1024**3:
+        raise PrerequisiteError("insufficient_h1_evidence_disk")
     directory.mkdir()
     samples = integer(config.get("samples", 31), positive=True)
     if samples < 3:
@@ -166,10 +175,11 @@ def measure(
     port(base + 10 + bonds)
     interface = text(config["interface"])
     addresses = [text(v) for v in rows(config["link_addresses"])]
-    if len(addresses) < links:
+    if generator is None and len(addresses) < links:
         raise PrerequisiteError(f"missing_uplink_addresses:need_{links}")
     ips = directory / "ips.txt"
-    ips.write_text("\n".join(addresses[:links]) + "\n")
+    if generator is None:
+        ips.write_text("\n".join(addresses[:links]) + "\n")
     receiver_core = integer(config.get("receiver_core", min(os.sched_getaffinity(0))))
     variables = {
         "receiver_port": base, "metrics_port": base + 1, "sls_port": base + 2,
@@ -190,7 +200,9 @@ def measure(
         ], directory / "receiver.log", "srtla_rec is now running")
         outputs = []
         loads = []
-        for bond in range(bonds):
+        if generator is not None:
+            generator.prepare(directory, {"bonds": bonds, "bitrate": bitrate, "links": links})
+        for bond in range(bonds if generator is None else 0):
             media = directory / f"delivered-{bond}.ts"
             outputs.append(media)
             bond_variables = {**variables, "bond": bond, "local_port": base + 10 + bond, "media_file": str(media)}
@@ -215,6 +227,8 @@ def measure(
         if any(child.pid not in processes.bytes for child in loads):
             raise RuntimeError("missing_load_byte_progress:emit ffmpeg -progress pipe:1 total_size")
         before_load = sum(processes.bytes[child.pid] for child in loads)
+        if generator is not None:
+            generator.request("start")
         started = previous = time.monotonic()
         first_metrics = metrics(url)
         peak_cpu = [0.0] * len(before_cpu)
@@ -226,11 +240,19 @@ def measure(
             if sample:
                 threading.Event().wait(max(0, started + duration * sample / (samples - 1) - time.monotonic()))
             processes.alive()
+            if generator is not None:
+                generator.request("alive")
             now = time.monotonic()
             current_cpu, current_nic = cpu_counters(), nic_counters(interface)
             current_sls = process_ticks(sls.pid)
             current_receiver = process_ticks(receiver_process.pid)
             finished_metrics = metrics(url)
+            if generator is not None and (
+                finished_metrics["srtla_groups"] != bonds
+                or finished_metrics["srtla_groups_established"] != bonds
+                or finished_metrics["srtla_connections"] != bonds * links
+            ):
+                raise RuntimeError("generator_registered_link_count_mismatch")
             status = Path(f"/proc/{receiver_process.pid}/status").read_text()
             rss = int(re.search(r"^VmRSS:\s+(\d+)", status, re.MULTILINE)[1]) * 1024
             fds = len(list(Path(f"/proc/{receiver_process.pid}/fd").iterdir()))
@@ -257,6 +279,13 @@ def measure(
         elapsed = time.monotonic() - started
         delivered = (sum(p.stat().st_size if p.exists() else 0 for p in outputs) - before_bytes) * 8 / 1e6 / elapsed
         offered = (sum(processes.bytes[child.pid] for child in loads) - before_load) * 8 / 1e6 / elapsed
+        if generator is not None:
+            remote_window = generator.request("finish")
+            delivered = number(remote_window["delivered_goodput_mbps"])
+            offered = number(remote_window["offered_goodput_mbps"])
+            (directory / "generator-window.json").write_text(json.dumps({
+                "bench_start": started, "bench_end": started + elapsed, **remote_window,
+            }, indent=2) + "\n")
         (directory / "samples.json").write_text(json.dumps(snapshots, indent=2) + "\n")
         def removed(reason: str) -> float:
             key = f'srtla_groups_removed_total{{reason="{reason}"}}'
@@ -308,7 +337,7 @@ def preview_trials(config: dict, directory: Path) -> list[dict]:
     return results
 
 
-def retire_media(directory: Path, verdict: JsonMap) -> None:
+def retire_media(directory: Path, verdict: JsonMap, *, retain: bool = False) -> list[dict]:
     """Persist completed media checks before replacing owned streams with evidence."""
     (directory / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
     media = sorted(directory.glob("delivered-*.ts"))
@@ -324,11 +353,22 @@ def retire_media(directory: Path, verdict: JsonMap) -> None:
         })
     # H1 has no ffprobe-based verdict checks; do not add a new media gate.
     (directory / "media-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    for path in media:
-        path.unlink()
+    if not retain:
+        for path in media:
+            path.unlink()
+    return manifest
 
 
 def capture(config: JsonMap, directory: Path) -> JsonMap:
+    if "generator" not in config:
+        return capture_matrix(config, directory)
+    from capacity_remote import Generator
+
+    with Generator(config, directory) as generator:
+        return capture_matrix(config, directory, generator=generator)
+
+
+def capture_matrix(config: JsonMap, directory: Path, *, generator=None) -> JsonMap:
     for key in ("interface", "provider_class", "receiver", "sender", "sls", "sink", "load", "preview", "calibration", "link_addresses"):
         if key not in config:
             raise PrerequisiteError(f"missing_h1_config:{key}")
@@ -336,7 +376,16 @@ def capture(config: JsonMap, directory: Path) -> JsonMap:
         raise ValueError("H1 sender_ref must be main")
     if not re.fullmatch(r"[a-f0-9]{40}", text(config["sender_sha"])):
         raise ValueError("sender_sha must identify the unchanged main source")
-    nic, pps, calibration = calibrate(config, directory)
+    if generator is not None and mapping(config["generator"]).get("calibration_peer"):
+        generator.request("iperf")
+        try:
+            nic, pps, calibration = calibrate(config, directory)
+        finally:
+            generator.request("stop")
+    else:
+        nic, pps, calibration = calibrate(config, directory)
+    collect = measure if generator is None else partial(measure, generator=generator)
+    retire = retire_media if generator is None else generator.retire
     cells = []
     for count in rows(config.get("bonds", [1, 25, 50, 100, 150, 200])):
         bonds = integer(count, positive=True)
@@ -344,15 +393,15 @@ def capture(config: JsonMap, directory: Path) -> JsonMap:
             raise ValueError("H1 supports at most 200 bonds")
         for bitrate, links in product((6, 10, 20), (1, 4, 16)):
             label = f"{bonds}-{bitrate}-{links}"
-            baseline = measure(config, directory / (label + "-stock"), bonds, bitrate, links)
+            baseline = collect(config, directory / (label + "-stock"), bonds, bitrate, links)
             stock_media = bool(baseline["delivered_goodput_mbps"])
-            retire_media(directory / (label + "-stock"), {
+            retire(directory / (label + "-stock"), {
                 "metrics": baseline, "delivered_stock_media": stock_media,
             })
-            cell = measure(config, directory / label, bonds, bitrate, links)
+            cell = collect(config, directory / label, bonds, bitrate, links)
             cell["stock_rss_bytes"] = baseline["rss_bytes"]
             cell["baseline_goodput_mbps"] = baseline["delivered_goodput_mbps"]
-            retire_media(directory / label, {
+            retire(directory / label, {
                 "metrics": cell, "delivered_stock_media": stock_media,
             })
             if not cell["baseline_goodput_mbps"]:
@@ -361,6 +410,8 @@ def capture(config: JsonMap, directory: Path) -> JsonMap:
     # Per-bond packets are measured at the six-Mbps, single-uplink load.
     six = next(cell for cell in cells if cell["bitrate_mbps"] == 6 and cell["links"] == 1)
     per_bond_pps = (six["packets_received"][-1] - six["packets_received"][0]) / six["duration_s"] / six["bonds"]
+    if generator is not None:
+        generator.close()
     measured = {
         "schema_version": 1, "source": "real-host", "provider_class": config["provider_class"],
         "sender_ref": "main", "receiver": "stock", "sustainable_nic_mbps": nic,
@@ -374,7 +425,10 @@ def capture(config: JsonMap, directory: Path) -> JsonMap:
         "winner": "measured_capacity" if result["softCapBonds"] else "insufficient",
         "status": "MEASURED", "calibration": calibration,
         "sender_sha": config["sender_sha"],
-        "sender_binary_sha256": hashlib.sha256(Path(require_tool(text(mapping(config["sender"])["argv"][0]))).read_bytes()).hexdigest(),
+        "sender_binary_sha256": (
+            hashlib.sha256(Path(require_tool(text(mapping(config["sender"])["argv"][0]))).read_bytes()).hexdigest()
+            if generator is None else generator.provenance["sender_binary_sha256"]
+        ),
         "receiver_binary_sha256": hashlib.sha256(Path(text(config["receiver"])).read_bytes()).hexdigest(),
         "qualification_limit": "local capture is not the owner-gated Miami campaign",
     })

@@ -1,8 +1,8 @@
 # H1 relay capacity and G5 sender DNS
 
 [EXISTS] Deterministic fixtures, H1 process/NIC capture and G5 isolated wire
-capture. No sender or receiver source is changed. Real modes create local
-processes/listeners and G5 creates disposable namespaces; neither creates
+capture. No sender or receiver source is changed. Real modes create bench
+processes/listeners, optional generator processes, and G5 disposable namespaces; neither creates
 provider resources or publishes DNS. The Miami campaign remains owner-gated.
 
 ```bash
@@ -138,6 +138,20 @@ conservative measured lower bounds, not advertised line rate. Choose enough
 offered rates to find the sustainable limit; record an unsaturated sweep as a
 lower bound. Isolate unrelated traffic and retain the peer's provenance.
 Calibration passes `-w 104857600` to request the same 100 MiB socket buffer as `srtla_rec` (`RECV_BUF_SIZE` in `src/common.h:58`, applied by `src/receiver_main.cpp:34-35`) on both iperf3 endpoints; both calibration endpoints must have `net.core.rmem_max` and `net.core.wmem_max` at or above 104857600 (production relay nodes use 134217728) to avoid iperf3 aborting with "socket buffer size not set correctly".
+
+To move publishers, unchanged senders and sinks to an authorized generator, add
+`generator: {"argv":["ssh","-T","<generator>","python3","/srv/srtla/tests/compat/lib/capacity_generator.py"],"directory":"/srv/h1","source_address":"<routed generator IP>","receiver_host":"<routed bench IP>","calibration_peer":true}`
+to the JSON config. Deploy the same harness files on both hosts; their hashes
+must match. Use `{receiver_host}` in both sender destination and sink playback
+argv; publisher input remains generator-local. A fresh sender repeats the real
+source address for 1/4/16 distinct source-port links, verified with receiver gauges,
+without reload or SNAT. Keep `calibration.host` pointed at the generator and choose
+offered rates high enough for the real NIC load. The generator owns its media
+disk preflight, positive-progress readiness, independent monotonic byte window,
+and verdict/manifest-before-delete sequence; the bench retains small evidence,
+all receiver/SLS collectors and preview trials. EOF or controller-lease expiry
+reaps generator groups. Omit `generator` for the unchanged co-located default;
+all capacity rules and thresholds remain unchanged.
 
 For each requested bond count (1..200), the runner executes the entire
 6/10/20 Mbps by 1/4/16 link matrix. Each cell first runs a separate stock

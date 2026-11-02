@@ -58,11 +58,13 @@ class Processes:
     def start(
         self, command: list[str], log: Path, marker: str | None = None,
         *, cwd: Path | None = None, env: dict[str, str] | None = None, byte_progress: bool = False,
+        stdin: int | None = None,
     ) -> subprocess.Popen:
         destination = self.stack.enter_context(log.open("xb"))
         ready = threading.Event()
         child = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True, cwd=cwd, env=env,
+            stdin=stdin,
         )
         self.children.append(child)
 
