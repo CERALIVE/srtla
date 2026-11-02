@@ -18,6 +18,7 @@ from pathlib import Path
 
 from benchmark_fixture_io import JsonMap, integer, mapping, number, text
 from benchmark_live import Processes, PrerequisiteError, argv, port, require_tool
+from capacity_generator_processes import reap
 
 
 class Worker:
@@ -57,6 +58,7 @@ class Worker:
                 path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in (Path(__file__), Path(__file__).with_name("capacity_remote.py"),
                              Path(__file__).with_name("benchmark_live.py"),
+                             Path(__file__).with_name("capacity_generator_processes.py"),
                              Path(__file__).with_name("capacity_live.py"))
             },
             "host": os.uname().nodename, "source_address": generator["source_address"],
@@ -129,7 +131,7 @@ class Worker:
 
     def finish(self) -> JsonMap:
         end = self.snapshot()
-        self.processes.close()
+        reap(self.processes)
         self.processes = Processes()
         elapsed = number(end["monotonic_s"]) - number(self.begin["monotonic_s"])
         if elapsed <= 0:
@@ -181,7 +183,7 @@ class Worker:
                 ], self.directory / "iperf.log", "Server listening on", stdin=subprocess.DEVNULL)
                 return {"pid": self.processes.children[0].pid, "controller_lease_s": self.lease}
             case "stop":
-                self.processes.close()
+                reap(self.processes)
                 self.processes = Processes()
                 return {"stopped": True}
             case _:
@@ -225,7 +227,7 @@ def main() -> int:
             print(json.dumps(response, allow_nan=False), flush=True)
     finally:
         ignore_shutdown()
-        worker.processes.close()
+        reap(worker.processes)
 
 
 if __name__ == "__main__":

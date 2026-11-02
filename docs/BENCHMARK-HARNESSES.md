@@ -140,9 +140,12 @@ lower bound. Isolate unrelated traffic and retain the peer's provenance.
 Calibration passes `-w 104857600` to request the same 100 MiB socket buffer as `srtla_rec` (`RECV_BUF_SIZE` in `src/common.h:58`, applied by `src/receiver_main.cpp:34-35`) on both iperf3 endpoints; both calibration endpoints must have `net.core.rmem_max` and `net.core.wmem_max` at or above 104857600 (production relay nodes use 134217728) to avoid iperf3 aborting with "socket buffer size not set correctly".
 
 To move publishers, unchanged senders and sinks to an authorized generator, add
-`generator: {"argv":["ssh","-T","<generator>","python3","/srv/srtla/tests/compat/lib/capacity_generator.py"],"directory":"/srv/h1","source_address":"<routed generator IP>","receiver_host":"<routed bench IP>","calibration_peer":true}`
+`generator: {"argv":["ssh","-T","-o","BatchMode=yes","-o","StrictHostKeyChecking=yes","-o","UserKnownHostsFile=/srv/h1/known_hosts","<generator>","python3","/srv/srtla/tests/compat/lib/capacity_generator.py"],"known_hosts":"/srv/h1/known_hosts","directory":"/srv/h1","source_address":"<routed generator IP>","receiver_host":"<routed bench IP>","calibration_peer":true}`
 to the JSON config. Deploy the same harness files on both hosts; their hashes
-must match. Use `{receiver_host}` in both sender destination and sink playback
+must match. SSH requires a caller-provisioned `known_hosts` file; the runner
+enforces batch mode and strict checking against that file, overriding unsafe
+caller options. Other host-key trust sources, automatic key updates and connection
+reuse are disabled: there is no TOFU or `accept-new`. Use `{receiver_host}` in both sender destination and sink playback
 argv; publisher input remains generator-local. A fresh sender repeats the real
 source address for 1/4/16 distinct source-port links, verified with receiver gauges,
 without reload or SNAT. Keep `calibration.host` pointed at the generator and choose
@@ -150,8 +153,15 @@ offered rates high enough for the real NIC load. The generator owns its media
 disk preflight, positive-progress readiness, independent monotonic byte window,
 and verdict/manifest-before-delete sequence; the bench retains small evidence,
 all receiver/SLS collectors and preview trials. EOF or controller-lease expiry
-reaps generator groups. Omit `generator` for the unchanged co-located default;
+reaps generator groups, including EOF during `finish` or `stop`: an unconditional
+final kill/reap sweep runs even after an interrupted owner. Surviving groups or
+an abnormal worker exit are runtime failures. Omit `generator` for the unchanged co-located default;
 all capacity rules and thresholds remain unchanged.
+
+Run `python3 tests/compat/lib/test_capacity_remote_ssh.py -v` for the local SSH
+integration check. It requires OpenSSH client/server executables and creates
+throwaway keys and an unprivileged loopback inetd server, without installing a
+service or trusting a host on first use.
 
 For each requested bond count (1..200), the runner executes the entire
 6/10/20 Mbps by 1/4/16 link matrix. Each cell first runs a separate stock

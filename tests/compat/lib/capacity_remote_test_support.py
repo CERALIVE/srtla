@@ -69,6 +69,14 @@ def worker_main(mode: str) -> None:
     """Replace only worker clocks/counter sources for exact window assertions."""
     import capacity_generator
 
+    if mode == "teardown-error":
+        original_reap = capacity_generator.reap
+
+        def fail_teardown(owner):
+            original_reap(owner)
+            raise RuntimeError("injected_generator_teardown_failure")
+
+        capacity_generator.reap = fail_teardown
     if mode == "iperf-fixture":
         original_tool = capacity_generator.require_tool
         original_start = Processes.start
@@ -168,7 +176,7 @@ def exited(pids: list[int]) -> None:
                 os.close(descriptor)
 
 
-def bench_capture(root: Path, config: dict, generator) -> tuple[dict, list[str]]:
+def bench_capture(root: Path, config: dict, generator, *, metric_updates=None) -> tuple[dict, list[str]]:
     """Keep capture assembly intact; fake the bench OS boundary, not the worker."""
     roles = []
     cpu = [[0, 0, 0, 100, 0, 0, 0, 0]]
@@ -178,6 +186,7 @@ def bench_capture(root: Path, config: dict, generator) -> tuple[dict, list[str]]
         **{f'srtla_groups_removed_total{{reason="{reason}"}}': 0
            for reason in ("evicted", "idle_timeout", "srt_error", "auth_failed")},
     }
+    metric.update(metric_updates or {})
     original_read, original_iterdir = Path.read_text, Path.iterdir
 
     def read_status(path, *args, **kwargs):

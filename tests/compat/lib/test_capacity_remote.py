@@ -18,8 +18,10 @@ import capacity_live
 import capacity_probe
 from benchmark_live import Processes, PrerequisiteError
 from capacity_remote_test_support import bench_capture, config_for, exited, paired_capture_results, peer
+from test_capacity_remote_review import RemoteReviewTests
+from test_capacity_remote_teardown import TeardownTests
 
-class RemoteGeneratorTests:
+class RemoteGeneratorTests(RemoteReviewTests, TeardownTests):
     def test_remote_generator_runs_no_load_sender_or_sink_on_bench(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -155,7 +157,7 @@ class RemoteGeneratorTests:
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
             config = config_for(root)
-            with peer(root, config) as (generator, bench):
+            with self.assertRaisesRegex(RuntimeError, "^generator_exited:-9$"), peer(root, config) as (generator, bench):
                 cell = bench / "cell"
                 cell.mkdir()
                 generator.prepare(cell, {"bonds": 2, "bitrate": 6, "links": 4})

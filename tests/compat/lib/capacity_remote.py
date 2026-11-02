@@ -21,8 +21,21 @@ class Generator:
     def __init__(self, config: JsonMap, directory: Path) -> None:
         self.config = config
         self.directory = directory
-        command = [text(part) for part in rows(mapping(config["generator"])["argv"])]
+        generator = mapping(config["generator"])
+        command = [text(part) for part in rows(generator["argv"])]
         command[0] = require_tool(command[0])
+        if Path(command[0]).name == "ssh":
+            known_hosts = Path(text(generator["known_hosts"])).expanduser().resolve()
+            if not known_hosts.is_file():
+                raise PrerequisiteError(f"missing_generator_known_hosts:{known_hosts}")
+            options = [
+                "BatchMode=yes", "StrictHostKeyChecking=yes",
+                f"UserKnownHostsFile={json.dumps(str(known_hosts))}",
+                "GlobalKnownHostsFile=/dev/null", "KnownHostsCommand=none",
+                "VerifyHostKeyDNS=no", "UpdateHostKeys=no", "CheckHostIP=no",
+                "ControlMaster=no", "ControlPath=none",
+            ]
+            command = [command[0], *[part for option in options for part in ("-o", option)], *command[1:]]
         self.log = (directory / "generator-stderr.log").open("xb")
         try:
             self.child = subprocess.Popen(
@@ -38,6 +51,7 @@ class Generator:
         self.provenance: JsonMap = {}
         self.cell: Path | None = None
         self.closed = False
+        self.command_failed = False
 
     def __enter__(self) -> Generator:
         try:
@@ -46,6 +60,7 @@ class Generator:
                 path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in (Path(__file__), Path(__file__).with_name("capacity_generator.py"),
                              Path(__file__).with_name("benchmark_live.py"),
+                             Path(__file__).with_name("capacity_generator_processes.py"),
                              Path(__file__).with_name("capacity_live.py"))
             }
             if self.provenance["harness_sha256"] != expected:
@@ -78,6 +93,7 @@ class Generator:
             "bench_received": time.monotonic(), "response": response,
         })
         if "error" in response:
+            self.command_failed = True
             message = text(response["error"])
             if response.get("prerequisite"):
                 raise PrerequisiteError(message)
@@ -111,6 +127,8 @@ class Generator:
                 os.killpg(self.child.pid, signal.SIGKILL)
                 self.child.wait(timeout=5)
                 raise
+            if self.child.returncode and not self.command_failed:
+                raise RuntimeError(f"generator_exited:{self.child.returncode}")
         finally:
             self.selector.close()
             self.child.stdout.close()
