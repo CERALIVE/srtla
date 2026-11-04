@@ -160,7 +160,7 @@ def media_space(directory: Path, bonds: int, bitrate: int, duration: float) -> N
 
 def measure(
     config: dict, directory: Path, bonds: int, bitrate: int, links: int,
-    *, generator=None,
+    *, generator=None, observe=None, process_owner=None,
 ) -> dict:
     duration = number(config.get("duration_s", 1800), positive=True)
     if generator is None:
@@ -187,7 +187,7 @@ def measure(
         "directory": str(directory),
     }
     receiver = require_tool(text(config["receiver"]))
-    with Processes() as processes:
+    with (process_owner or Processes)() as processes:
         sls_config = mapping(config["sls"])
         sls = processes.start(
             argv(sls_config, variables), directory / "sls.log", sls_config.get("ready"),
@@ -274,6 +274,8 @@ def measure(
                 "sls_ticks": current_sls, "receiver_ticks": current_receiver,
                 "metrics": finished_metrics, "rss_bytes": rss, "fds": fds,
             })
+            if observe is not None:
+                observe(snapshots[-1])
             before_cpu, before_nic, before_sls, previous = current_cpu, current_nic, current_sls, now
             before_receiver = current_receiver
         elapsed = time.monotonic() - started

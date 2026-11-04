@@ -329,6 +329,11 @@ the distinct rule version and hash. See [`docs/BENCHMARK-HARNESSES.md`](docs/BEN
 `tests/workflow-contracts.sh` pins the shape of the workflows (ccache bounds, permission
 scopes, job graph); `tests/workflow-contracts-negative.sh` proves those assertions bite.
 
+H1 also supports explicit `"rule": "v3", "mode": "ramp"` ceiling measurement
+through the remote generator, with bounded steps and 80% confirmation.
+See [`docs/BENCHMARK-HARNESSES.md`](docs/BENCHMARK-HARNESSES.md) for thresholds,
+required live SRT counters and the limits of measured capacity.
+
 ### Further reading
 
 - [`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md): protocol, registration, quality model
