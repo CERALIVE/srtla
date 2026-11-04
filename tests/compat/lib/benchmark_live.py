@@ -154,7 +154,10 @@ def run_live(name: str, config_path: Path | None, output: Path | None, rule: str
         artifacts = output.resolve().with_name(output.stem + "-artifacts")
         artifacts.mkdir()
         if name == "relay-capacity-probe":
-            from capacity_live import capture
+            if config.get("rule") == "v3":
+                from capacity_ramp_live import capture
+            else:
+                from capacity_live import capture
 
             result = capture(config, artifacts)
         else:

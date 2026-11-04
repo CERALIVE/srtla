@@ -93,10 +93,15 @@ def run(
             check=False, timeout=60,
         ).returncode
         if status == 0 and name == "relay-capacity-probe":
-            return subprocess.run(
+            status = subprocess.run(
                 [sys.executable, str(Path(__file__).with_name("test_capacity_rule_v2.py"))],
                 check=False, timeout=60,
             ).returncode
+            if status == 0:
+                return subprocess.run(
+                    [sys.executable, str(Path(__file__).with_name("test_capacity_ramp.py"))],
+                    check=False, timeout=60,
+                ).returncode
         return status
     if live:
         from benchmark_live import run_live
@@ -113,6 +118,9 @@ def run(
     try:
         raw = args.fixture.read_bytes()
         document: Json = json.loads(raw)
+        if name == "relay-capacity-probe" and mapping(document).get("rule") == "v3":
+            from capacity_ramp import evaluate
+
         result = evaluate(document)
         result.setdefault("rule_sha256", hashlib.sha256(rule.encode()).hexdigest())
         result["input_sha256"] = hashlib.sha256(raw).hexdigest()

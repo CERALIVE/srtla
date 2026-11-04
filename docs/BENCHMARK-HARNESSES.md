@@ -123,6 +123,101 @@ authorize extra receiver processes. The fixture preview cap is the largest
 observed concurrency sustaining ≥9.5 fps (5% tolerance around the 10 fps target)
 for 30 minutes with CPU <70%; it does not change `PREVIEW_TRANSCODE_MAX`.
 
+### H1 v3 ceiling ramp (explicit opt-in)
+
+[EXISTS] On November 4, 2026 the owner approved measuring a quality ceiling on
+`vc2-2c-4gb`, then confirming capacity at 80% of that ceiling. v1/v2 strict
+headroom verdicts remain historical results, with unchanged rules and hashes.
+Select v3 in the existing fixture or real-host command by adding both
+`"rule": "v3"` and `"mode": "ramp"` to the JSON config:
+
+```json
+{
+  "rule": "v3", "mode": "ramp",
+  "profiles": [
+    {"bitrate_mbps": 6, "links": 2},
+    {"bitrate_mbps": 6, "links": 4},
+    {"bitrate_mbps": 10, "links": 4}
+  ],
+  "start_bonds": 5, "increment": 5, "max_bonds": 200, "step_s": 300,
+  "warmup_s": 600, "confirmation_s": 1800,
+  "thresholds": {"srt_drop_packets": 0, "srt_loss_packets": 0}
+}
+```
+
+These fields extend the complete real-host config below. Profiles, starting
+count, increment and maximum are configurable; the maximum must be a reachable
+step, at most 200. Step durations are multiples of ten seconds, at least 20.
+The defaults above sample every ten seconds. v3 requires the existing C21 remote
+generator and a physical NIC; it does not run publishers on the receiver.
+It does not run the v1/v2 nine-cell matrix or preview trials.
+
+Also supply `srt_stats: {"argv": ["/srv/h1/read-sls-counters", "{bonds}"]}`.
+This command must read the running receiver-side SLS's cumulative SRT receive
+counters for **all and only** the active publishers and emit one JSON object:
+`{"pkt_rcv_drop": 0, "pkt_rcv_loss": 0, "publishers": 5, "disconnects": 0}`.
+Values must come from live SRT statistics, with `pktRcvDropTotal` and
+`pktRcvLossTotal` semantics, not socket forwarding counts or assumed zeros.
+Use the deployed SLS statistics interface; the executable must exist on the
+receiver before the campaign starts. It is a required integration boundary,
+like the existing SLS/load/sink commands. It runs once per sample, exits within
+five seconds, and its raw output is retained. `publishers` must equal the active
+count; `disconnects` is a cumulative publisher disconnect count. Missing,
+malformed or reset counters cannot establish capacity. Command substitutions
+are `{bonds}` and `{directory}`; escape literal braces as `{{` and `}}`.
+
+A step breaks on delivered/offered application goodput below 98%, cumulative
+SRT drop/loss growth beyond the recorded packet thresholds (zero by default),
+the **same** core at or above 95% in more than half the interval samples,
+growth in UDP `RcvbufErrors` or `SndbufErrors`, or a publisher start failure or
+disconnect. Exactly half the CPU samples at 95% passes. Offered load must also
+be within the existing 5% tolerance of count times requested bitrate.
+Only SRT drop/loss thresholds are configurable. All thresholds enter the verdict.
+
+Each profile stops at its first failing step. Its ceiling is the last passing
+count. Passing the configured maximum records `ceiling_relation: >=`, a lower
+bound on the ceiling; it never certifies unmeasured higher counts. Confirmation
+starts at `floor(4 * ceiling / 5)` without rounding to an increment. Each attempt
+captures a separate stock reference and measured arm at that count, both with
+the break checks above. RSS uses v2's positive nondecreasing growth predicate
+against the stock arm at matching retained indices after warm-up. Warm-up is
+at least 600 seconds and retained observation at least 1800 seconds. Capture
+adds one ten-second interval (2410 seconds per arm by default) so actual retained
+timestamps span the full window. A failed stock arm fails that attempt.
+Failure steps down exactly one increment, with **two attempts total**; no passing
+confirmation means zero capacity for that profile.
+
+`softCapBonds` is the minimum confirmed count across every requested profile;
+`maxAssignedRelays = 2 * softCapBonds`. Per-profile sustainable NIC Mbps/pps
+are mean rates actually carried over the confirmed post-warm-up window using
+the existing real-NIC counters in both directions. Top-level values are the
+minimum observed directional rates across profiles, not advertised line rate
+or a measured saturation ceiling. Calibration is retained as context only.
+It does not impose the v1/v2 60% NIC headroom formula on v3.
+
+Every cell has a work deadline, default `duration_s + 30 * bonds + 120` seconds,
+optionally overridden by positive `step_timeout_s`. A blocked control channel,
+metrics read or step fails with `step_timeout`; a publisher readiness wait also
+retains its existing named failure. Local process groups are killed/reaped and
+closing the generator channel triggers C21's EOF cleanup and bounded lease.
+Cleanup waits are bounded independently of the work timer and may extend the
+wall time; they are not measurement samples. Calibration is also bounded.
+Keep the foreground C21 worker and its lease active; do not wrap it in a
+detached daemon. `progress.jsonl` retains every raw sample immediately, and
+stdout emits cell start/sample/end events. Run 23 was progressing normally:
+its copied result tree looked stale between copy phases. Observe this progress
+stream rather than treating a periodically copied artifact tree as a liveness
+signal.
+
+Verdicts retain `rule_version: v3`, a distinct `rule_sha256`, profiles, options,
+thresholds, all raw per-step samples, failed steps, ceilings and confirmation
+attempts. Synthetic v3 input uses the ordered `cells` schedule demonstrated by
+`fixture()` in `tests/compat/lib/test_capacity_ramp.py`; missing, mismatched or
+unused cells are rejected. Run that file directly or `capacity-probe.sh
+--selftest`. Fixtures and local captures remain `qualified: false`; this is an
+engineering measurement rule, not a provider qualification or production cap
+change. A ceiling is specific to its profiles, binaries, hosts and capture window.
+
 ## G5 input contract
 
 `dns_fixture()` in the test file supplies all four sender fixtures:
