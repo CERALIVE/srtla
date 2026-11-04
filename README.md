@@ -314,6 +314,10 @@ positive `total_size` progress. A publisher without progress fails within the
 history. The build gate is named **Build Check** (`build-check.yml`), not `ci.yml`.
 H1 retains per-run media-check verdicts and manifests instead of media, with a named low-disk preflight; see [`docs/BENCHMARK-HARNESSES.md`](docs/BENCHMARK-HARNESSES.md).
 H1 calibration requests the production receiver's 104857600-byte socket buffer in both directions.
+H1 keeps rule v1 as the default. Set `"rule": "v2"` in fixture or real-host JSON
+to judge RSS after a 600-second warm-up with 1800 seconds of subsequent samples.
+Real v2 capture uses at least 2400 seconds at 60-second intervals; verdicts record
+the distinct rule version and hash. See [`docs/BENCHMARK-HARNESSES.md`](docs/BENCHMARK-HARNESSES.md).
 
 | Workflow | Trigger | What it proves |
 |---|---|---|

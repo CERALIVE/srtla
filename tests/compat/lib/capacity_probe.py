@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import hashlib
 from fractions import Fraction
 from itertools import product
 from typing import Final
@@ -25,6 +26,29 @@ RULE: Final = (
     "fixtures never qualify a provider."
 )
 MATRIX: Final = set(product((6, 10, 20), (1, 4, 16)))
+RULE_V2: Final = RULE.replace("H1 v1:", "H1 v2:").replace(
+    "monotonic RSS growth no worse than stock over same window",
+    "RSS samples at or after warmup_s (default 600s), requiring >=1800s from "
+    "first retained sample to end; positive nondecreasing growth no worse than "
+    "stock over the same retained window; capture >=warmup_s+1800s at 60s intervals",
+)
+
+
+def rule_settings(document: JsonMap) -> tuple[str, float]:
+    version = text(document.get("rule", "v1"))
+    if version not in ("v1", "v2"):
+        raise ValueError("H1 rule must be v1 or v2")
+    return version, number(document.get("warmup_s", 600)) if version == "v2" else 0
+
+
+def measurement_config(config: JsonMap) -> JsonMap:
+    """Keep v1 capture intact; give v2 a complete post-warm-up sample window."""
+    version, warmup = rule_settings(config)
+    if version == "v1":
+        return config
+    minimum = math.ceil(warmup / 60) * 60 + 1800
+    duration = math.ceil(max(number(config.get("duration_s", minimum), positive=True), minimum) / 60) * 60
+    return {**config, "duration_s": duration, "samples": duration // 60 + 1}
 
 
 def capacity(bonds: int, nic_mbps: float, pps: float, per_bond_pps: float) -> tuple[int, int]:
@@ -40,6 +64,7 @@ def capacity(bonds: int, nic_mbps: float, pps: float, per_bond_pps: float) -> tu
 
 def evaluate(value: Json, *, captured: bool = False) -> JsonMap:
     document = mapping(value) if captured else fixture_document(value)
+    version, warmup = rule_settings(document)
     if captured and (document.get("schema_version") != 1 or document.get("source") != "real-host"):
         raise ValueError("captured metrics require schema_version 1, source real-host")
     if document.get("sender_ref") != "main" or document.get("receiver") != "stock":
@@ -95,8 +120,17 @@ def evaluate(value: Json, *, captured: bool = False) -> JsonMap:
                 raise ValueError("receiver CPU must be a percentage")
             bound = bound and receiver_cpu >= 85
         cpu_bound = cpu_bound or bound
-        monotonic_growth = rss[-1] > rss[0] and all(b >= a for a, b in zip(rss, rss[1:]))
-        rss_ok = not monotonic_growth or rss[-1] - rss[0] <= stock_rss[-1] - stock_rss[0]
+        judged_rss, judged_stock = rss, stock_rss
+        rss_window_s = duration
+        rss_start_s = 0.0
+        if version == "v2":
+            first = min(len(rss) - 1, math.ceil(warmup * (len(rss) - 1) / duration))
+            rss_start_s = duration * first / (len(rss) - 1)
+            rss_window_s = duration * (len(rss) - 1 - first) / (len(rss) - 1)
+            judged_rss, judged_stock = rss[first:], stock_rss[first:]
+        monotonic_growth = judged_rss[-1] > judged_rss[0] and all(b >= a for a, b in zip(judged_rss, judged_rss[1:]))
+        rss_ok = not monotonic_growth or judged_rss[-1] - judged_rss[0] <= judged_stock[-1] - judged_stock[0]
+        rss_window_ok = version == "v1" or rss_window_s >= 1800
         goodput = number(cell["delivered_goodput_mbps"])
         baseline = number(cell["baseline_goodput_mbps"], positive=True)
         checks = {
@@ -105,7 +139,7 @@ def evaluate(value: Json, *, captured: bool = False) -> JsonMap:
             "nic": nic_load <= 0.6,
             "pps": pps_load <= 0.6,
             "udp": errors[-1] == errors[0],
-            "rss": rss_ok,
+            "rss": rss_ok and rss_window_ok,
             "goodput": abs(goodput - baseline) <= baseline * 0.05,
             "auth": integer(cell["auth_failures"]) == 0,
             "evictions": integer(cell["evictions"]) == 0,
@@ -123,6 +157,13 @@ def evaluate(value: Json, *, captured: bool = False) -> JsonMap:
             "pass": ok, "checks": checks, "cpu_bound": bound, "recvmmsg_fill": fill,
             "rss_slope_bytes_per_second": (rss[-1] - rss[0]) / duration,
             "fd_peak": max(fds), "metrics": cell,
+            **({"rss_window": {
+                "warmup_s": warmup, "start_s": rss_start_s, "duration_s": rss_window_s,
+                "reason": (
+                    "post_warmup_window_too_short" if not rss_window_ok else
+                    "monotonic_growth_exceeds_stock" if not rss_ok else "pass"
+                ),
+            }} if version == "v2" else {}),
         })
     bond_count = max((bonds for bonds, matrix in passed.items() if matrix == MATRIX), default=0)
     soft_cap, max_assigned = (0, 0)
@@ -151,6 +192,8 @@ def evaluate(value: Json, *, captured: bool = False) -> JsonMap:
         "preview_trials": trials, "cells": cell_results,
         "sustainable_nic_mbps": nic, "sustainable_pps": pps,
         "per_bond_pps_6mbps": per_bond_pps,
+        **({"rule_version": "v2", "rule_sha256": hashlib.sha256(RULE_V2.encode()).hexdigest()}
+           if version == "v2" else {}),
     }
 
 

@@ -87,11 +87,17 @@ def run(
     if args.config is not None and not live:
         parser.error("--config requires --live or --real-host")
     if args.selftest:
-        return subprocess.run(
+        status = subprocess.run(
             [sys.executable, str(Path(__file__).with_name("test_benchmark_harnesses.py")),
              test_class, "CliTests", "LiveTests"],
             check=False, timeout=60,
         ).returncode
+        if status == 0 and name == "relay-capacity-probe":
+            return subprocess.run(
+                [sys.executable, str(Path(__file__).with_name("test_capacity_rule_v2.py"))],
+                check=False, timeout=60,
+            ).returncode
+        return status
     if live:
         from benchmark_live import run_live
 
@@ -108,7 +114,7 @@ def run(
         raw = args.fixture.read_bytes()
         document: Json = json.loads(raw)
         result = evaluate(document)
-        result["rule_sha256"] = hashlib.sha256(rule.encode()).hexdigest()
+        result.setdefault("rule_sha256", hashlib.sha256(rule.encode()).hexdigest())
         result["input_sha256"] = hashlib.sha256(raw).hexdigest()
         rendered = json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n"
         with args.output.open("x", encoding="utf-8") as destination:
