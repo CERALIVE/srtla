@@ -166,8 +166,6 @@ def capture(config: JsonMap, directory: Path) -> JsonMap:
             raise PrerequisiteError(f"missing_h1_v3_config:{key}")
     if config.get("sender_ref") != "main" or not re.fullmatch(r"[a-f0-9]{40}", text(config["sender_sha"])):
         raise ValueError("H1 v3 requires unchanged main sender with a 40-character source SHA")
-    # measure's local-address contract is unused with a remote generator.
-    config = {**config, "link_addresses": []}
     receiver = require_tool(text(config["receiver"]))
     interface = text(config["interface"])
     if interface == "lo" or not Path(f"/sys/class/net/{interface}/device").exists():

@@ -151,6 +151,9 @@ step, at most 200. Step durations are multiples of ten seconds, at least 20.
 The defaults above sample every ten seconds. v3 requires the existing C21 remote
 generator and a physical NIC; it does not run publishers on the receiver.
 It does not run the v1/v2 nine-cell matrix or preview trials.
+`link_addresses` is used only for local publishers. The remote generator derives
+its links from `generator.source_address` and the profile's `links` count, so v3
+does not require `link_addresses`; an empty list is also accepted and ignored.
 
 Also supply `srt_stats: {"argv": ["/srv/h1/read-sls-counters", "{bonds}"]}`.
 This command must read the running receiver-side SLS's cumulative SRT receive

@@ -120,7 +120,7 @@ Do not weaken a job to get green, and do not add a workflow that publishes anyth
   **numeric id** (118/119/120) so it compiles against stock libsrt headers and reports
   `unsupported` at runtime. Gate a `REORDERFREEZE` arm on the *readback*, not the banner.
 - Privileged scenarios (`netem`) exit 77 to self-skip without `CAP_NET_ADMIN`.
-- H1/G5 (v1 default; JSON `rule: v2` for RSS warm-up): `docs/BENCHMARK-HARNESSES.md`.
+- H1/G5 (v1/v2 frozen; v3 remote link plans): `docs/BENCHMARK-HARNESSES.md`.
   Run both `capacity-probe.sh --selftest` and `sender-dns.sh --selftest` in the
   compat scenarios directory. Real modes require explicit config; missing
   prerequisites exit 77 with a named reason. Keep one sender across uplinks;
