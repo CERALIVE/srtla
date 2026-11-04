@@ -18,7 +18,7 @@ from pathlib import Path
 
 from benchmark_fixture_io import JsonMap, integer, mapping, number, rows, text
 from benchmark_live import Processes, PrerequisiteError, argv, port, require_tool
-from capacity_probe import evaluate
+from capacity_probe import evaluate, measurement_config
 
 
 def counter_rates(before: list[int], after: list[int], elapsed: float) -> list[float]:
@@ -360,6 +360,7 @@ def retire_media(directory: Path, verdict: JsonMap, *, retain: bool = False) -> 
 
 
 def capture(config: JsonMap, directory: Path) -> JsonMap:
+    config = measurement_config(config)
     if "generator" not in config:
         return capture_matrix(config, directory)
     from capacity_remote import Generator
@@ -417,6 +418,8 @@ def capture_matrix(config: JsonMap, directory: Path, *, generator=None) -> JsonM
         "sender_ref": "main", "receiver": "stock", "sustainable_nic_mbps": nic,
         "sustainable_pps": pps, "per_bond_pps_6mbps": per_bond_pps,
         "cells": cells, "preview_trials": preview_trials(config, directory),
+        **({"rule": "v2", "warmup_s": config.get("warmup_s", 600)}
+           if config.get("rule") == "v2" else {}),
     }
     result = evaluate(measured, captured=True)
     (directory / "measurements.json").write_text(json.dumps(measured, indent=2) + "\n")

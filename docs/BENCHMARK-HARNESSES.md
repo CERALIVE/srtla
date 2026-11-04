@@ -61,6 +61,49 @@ Monotonic RSS growth must not exceed stock's absolute growth over that same
 window; flat RSS passes. Counters must be measured over the window, not assumed
 zero from process startup.
 
+### H1 rule versions
+
+[EXISTS] The rule above is **v1**, and remains the default. Omit `rule` or set
+`"rule": "v1"` in the fixture or real-host JSON config to replay it. Its rule
+text, hash and verdict shape are unchanged; historical v1 results, including
+run 22's zero-capacity verdict, retain their original meaning.
+
+Select **v2** explicitly by adding `"rule": "v2"` to that JSON document:
+
+```json
+{"rule": "v2", "warmup_s": 600, "duration_s": 2400, "samples": 41}
+```
+
+These are fields to add to the complete fixture or real-host config, not a
+standalone config. `warmup_s` is optional and defaults to 600 seconds; it must
+be finite and nonnegative. v2 changes only the RSS check. A one-time RSS rise
+followed by a long plateau motivated excluding the first ten minutes.
+Only samples at or after `warmup_s` enter the RSS predicate, including the
+stock arm at the same sample indices. The existing contract supplies evenly
+spaced sample arrays over `duration_s`; the first retained sample starts the
+window. That sample through the end must span at least 1800 seconds.
+A shorter window fails the RSS check with the named
+`rss_window.reason: post_warmup_window_too_short`, even when RSS is flat.
+Inside a sufficient window, the v1 predicate is unchanged: positive,
+nondecreasing RSS growth fails unless its absolute growth is no worse than
+stock's growth over the same window. Nonmonotonic or flat RSS passes.
+
+Real-host v2 capture extends both stock and measured cells to at least the
+first 60-second sample at or after warm-up plus 1800 seconds. The default is
+2400 seconds and 41 samples; longer requested durations round up to a whole
+60-second interval. The runner derives the sample count, replacing a shorter
+duration or a conflicting `samples` value before launching local or remote
+generators. Fixture evaluation never extends supplied observations. All
+other checks, calibration loss limits, nine-cell requirements, capacity
+formulas and preview thresholds retain v1 behavior.
+
+v2 verdicts include `rule_version: v2`, a distinct `rule_sha256`, and each
+cell's `rss_window` with warm-up, start, duration and reason. Input hashes
+still cover the original JSON bytes. Existing full-window RSS slopes and
+raw observations remain available. This is a new versioned engineering
+rule, not a revision of past v1 verdicts or provider qualification. New
+capacity measurements and independent review are still required.
+
 The bond-count result is the greatest count whose **entire nine-cell matrix**
 passes; a missing or failing cell cannot be treated as a passing configuration.
 The integer capacity is:

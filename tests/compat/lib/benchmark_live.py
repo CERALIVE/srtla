@@ -161,7 +161,7 @@ def run_live(name: str, config_path: Path | None, output: Path | None, rule: str
             from sender_dns_live import campaign
 
             result = campaign(config, artifacts)
-        result["rule_sha256"] = hashlib.sha256(rule.encode()).hexdigest()
+        result.setdefault("rule_sha256", hashlib.sha256(rule.encode()).hexdigest())
         result["input_sha256"] = hashlib.sha256(config_bytes).hexdigest()
         result["artifacts"] = str(artifacts)
         write_verdict(output, result)
