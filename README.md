@@ -333,6 +333,8 @@ H1 also supports explicit `"rule": "v3", "mode": "ramp"` ceiling measurement
 through the remote generator, with bounded steps and 80% confirmation.
 See [`docs/BENCHMARK-HARNESSES.md`](docs/BENCHMARK-HARNESSES.md) for thresholds,
 required live SRT counters and the limits of measured capacity.
+Remote capture uses the generator's link plan; `link_addresses` is only used
+when publishers run locally.
 
 ### Further reading
 

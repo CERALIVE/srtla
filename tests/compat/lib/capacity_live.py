@@ -174,11 +174,11 @@ def measure(
     base = port(integer(config.get("port_base", 43100)))
     port(base + 10 + bonds)
     interface = text(config["interface"])
-    addresses = [text(v) for v in rows(config["link_addresses"])]
-    if generator is None and len(addresses) < links:
-        raise PrerequisiteError(f"missing_uplink_addresses:need_{links}")
     ips = directory / "ips.txt"
     if generator is None:
+        addresses = [text(v) for v in rows(config["link_addresses"])]
+        if len(addresses) < links:
+            raise PrerequisiteError(f"missing_uplink_addresses:need_{links}")
         ips.write_text("\n".join(addresses[:links]) + "\n")
     receiver_core = integer(config.get("receiver_core", min(os.sched_getaffinity(0))))
     variables = {

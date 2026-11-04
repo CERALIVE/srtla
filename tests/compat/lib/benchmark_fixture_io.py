@@ -99,7 +99,8 @@ def run(
             ).returncode
             if status == 0:
                 return subprocess.run(
-                    [sys.executable, str(Path(__file__).with_name("test_capacity_ramp.py"))],
+                    [sys.executable, "-m", "unittest", "discover", "-s", str(Path(__file__).parent),
+                     "-p", "test_capacity_ramp*.py"],
                     check=False, timeout=60,
                 ).returncode
         return status
